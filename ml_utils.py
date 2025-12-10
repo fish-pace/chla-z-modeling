@@ -1,3 +1,12 @@
+# --- required packages
+from __future__ import annotations
+import numpy as np
+import pandas as pd
+import xarray as xr
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
 def _require_keras():
     try:
         import importlib
@@ -9,10 +18,6 @@ def _require_keras():
             "TensorFlow/Keras required for this function. "
             "Install with `pip install tensorflow` or `yourpkg[cnn]`."
         ) from e
-
-import numpy as np
-import xarray as xr
-import pandas as pd
 
 def time_series_split(
     data: xr.Dataset,
@@ -289,12 +294,9 @@ from dataclasses import dataclass
 class MLBundle:
     model: object
     meta: dict
-    X_train: object = None
-    X_test: object = None
-    y_train: object = None
-    y_test: object = None
-    predict_fn: callable = None
-    plot_fn: callable = None
+    data: dict | None = None       # <- holds dataset, train_idx, test_idx, etc.
+    predict_fn: callable | None = None
+    plot_fn: callable | None = None
 
     def predict(self, *args, **kwargs):
         if self.predict_fn is None:
@@ -306,21 +308,12 @@ class MLBundle:
             raise AttributeError("No plot_fn stored in this bundle.")
         return self.plot_fn(*args, **kwargs)
 
-# Save a model bundle   
-import json
-import zipfile
-import pickle
-import tempfile
-import inspect
-from pathlib import Path
-
 def save_ml_bundle(
     zip_path,
     model,
-    X_train=None,
-    X_test=None,
-    y_train=None,
-    y_test=None,
+    dataset=None,
+    train_idx=None,
+    test_idx=None,
     meta=None,
     predict_helper=None,
     plot_helper=None,
@@ -331,32 +324,66 @@ def save_ml_bundle(
 
     Contents:
       - model.pkl   or model.keras
-      - data.pkl    (X_train, X_test, y_train, y_test)
+      - data.pkl    (optional: dataset, train_idx, test_idx)
       - meta.json   (includes helper function source if provided)
 
     meta["model_kind"] controls how the model is saved:
       - "keras"   -> saved as model.keras
       - anything else -> pickled as model.pkl
+
+    If `model` is a collection (dict/list/tuple), it is always pickled,
+    and metadata fields are added:
+
+      - meta["model_is_collection"] = True
+      - meta["model_collection_type"] = "dict" | "list" | "tuple"
+      - meta["n_submodels"]
+      - meta["model_keys"] (for dict)
     """
+    import inspect
+    import json
+    import pickle
+    import tempfile
+    import zipfile
+    from pathlib import Path
+
     meta = dict(meta or {})
 
-    # Infer model kind if not given
-    if "model_kind" not in meta:
-        cls_name = type(model).__name__.lower()
-        if "sequential" in cls_name or "functional" in cls_name:
-            meta["model_kind"] = "keras"
-        else:
-            meta["model_kind"] = "pickle"
+    # --- Detect if model is a collection ---
+    is_collection = isinstance(model, (dict, list, tuple))
+    meta["model_is_collection"] = bool(is_collection)
 
-    # A dict of name -> source
+    if is_collection:
+        if isinstance(model, dict):
+            meta["model_collection_type"] = "dict"
+            meta["model_keys"] = [str(k) for k in model.keys()]
+        elif isinstance(model, list):
+            meta["model_collection_type"] = "list"
+        else:
+            meta["model_collection_type"] = "tuple"
+
+        meta["n_submodels"] = len(model)
+
+    # --- Infer model kind if not given ---
+    if "model_kind" not in meta:
+        if is_collection:
+            meta["model_kind"] = "pickle"
+        else:
+            cls_name = type(model).__name__.lower()
+            if "sequential" in cls_name or "functional" in cls_name:
+                meta["model_kind"] = "keras"
+            else:
+                meta["model_kind"] = "pickle"
+
+    # --- Gather helper source code ---
     helpers_src = {}
-    
+
     # Predict helper
     if predict_helper is not None:
         name = predict_helper.__name__
         meta["predict_helper_name"] = name
         try:
-            helpers_src[name] = inspect.getsource(predict_helper)
+            src = inspect.getsource(predict_helper)
+            helpers_src[name] = src
         except OSError:
             pass
 
@@ -365,11 +392,12 @@ def save_ml_bundle(
         name = plot_helper.__name__
         meta["plot_helper_name"] = name
         try:
-            helpers_src[name] = inspect.getsource(plot_helper)
+            src = inspect.getsource(plot_helper)
+            helpers_src[name] = src
         except OSError:
             pass
 
-    # Extra helpers
+    # Extra helpers (e.g. feature adders, single-depth predictor, etc.)
     extra_helpers = extra_helpers or {}
     for name, fn in extra_helpers.items():
         try:
@@ -377,10 +405,16 @@ def save_ml_bundle(
         except OSError:
             pass
 
-    # Store in meta
     if helpers_src:
         meta["helpers"] = helpers_src
-        
+
+    # --- If we are given indices, stash them in meta too (JSON-safe) ---
+    if train_idx is not None:
+        meta["train_idx"] = np.asarray(train_idx).tolist()
+    if test_idx is not None:
+        meta["test_idx"] = np.asarray(test_idx).tolist()
+
+    # --- Write everything into a temp dir then zip it ---
     zip_path = Path(zip_path)
     zip_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -388,9 +422,7 @@ def save_ml_bundle(
         tmp = Path(tmp)
 
         # 1) Save model
-        if meta["model_kind"] == "keras":
-            # assume tf.keras or keras model
-            from keras.saving import save_model  # or model.save
+        if meta["model_kind"] == "keras" and not is_collection:
             model_path = tmp / "model.keras"
             model.save(model_path)
         else:
@@ -398,12 +430,11 @@ def save_ml_bundle(
             with open(model_path, "wb") as f:
                 pickle.dump(model, f)
 
-        # 2) Save data
+        # 2) Save data (dataset + indices)
         data = {
-            "X_train": X_train,
-            "X_test": X_test,
-            "y_train": y_train,
-            "y_test": y_test,
+            "dataset": dataset,
+            "train_idx": train_idx,
+            "test_idx": test_idx,
         }
         data_path = tmp / "data.pkl"
         with open(data_path, "wb") as f:
@@ -421,53 +452,75 @@ def save_ml_bundle(
 
     return str(zip_path)
 
-def _reconstruct_helper_from_meta(meta, which):
-    """
-    which: "predict" or "plot"
-    Looks for meta[f"{which}_helper_name"] and meta[f"{which}_helper_source"].
-    Returns a function or None.
-    """
-    name_key = f"{which}_helper_name"
-    src_key = f"{which}_helper_source"
-
-    if name_key not in meta or src_key not in meta:
-        return None
-
-    func_name = meta[name_key]
-    src = meta[src_key]
-
-    # Execute the source in a fresh namespace
-    ns = {}
-    exec(src, ns, ns)
-    fn = ns.get(func_name)
-    return fn
-
-
 def _print_bundle_usage(bundle, bundle_path):
-    model_kind = bundle.meta.get("model_kind", "pickle")
-    predict_name = bundle.meta.get("predict_helper_name")
-    plot_name = bundle.meta.get("plot_helper_name")
+    meta = bundle.meta
+    data = bundle.data or {}
+    model_kind = meta.get("model_kind", "pickle")
+    predict_name = meta.get("predict_helper_name")
+    plot_name = meta.get("plot_helper_name")
+
+    is_collection = meta.get("model_is_collection", False)
+    collection_type = meta.get("model_collection_type")
+    model_keys = meta.get("model_keys", [])
+    n_submodels = meta.get("n_submodels")
 
     print(f"\nLoaded ML bundle from: {bundle_path}")
     print(f"  model_kind : {model_kind}")
-    print(f"  target     : {bundle.meta.get('target_name', 'unknown')}")
-    print(f"  features   : {len(bundle.meta.get('feature_cols', []))} columns"
-          if "feature_cols" in bundle.meta else "")
+    if is_collection:
+        print(f"  model_type : collection ({collection_type}), n_submodels={n_submodels}")
+        if collection_type == "dict" and model_keys:
+            example_key = model_keys[0]
+            print(f"  example key: {example_key}")
+    else:
+        print("  model_type : single model")
+
+    if "target_name" in meta:
+        print(f"  target     : {meta['target_name']}")
+
+    if "feature_cols" in meta:
+        print(f"  features   : {len(meta['feature_cols'])} columns")
+
+    train_idx = meta.get("train_idx")
+    test_idx = meta.get("test_idx")
+    if train_idx is not None and test_idx is not None:
+        print(f"  train/test : {len(train_idx)} / {len(test_idx)} rows")
+
+    if data.get("dataset") is not None:
+        try:
+            nrows = len(data["dataset"])
+            print(f"  dataset    : {nrows} rows stored in bundle")
+        except Exception:
+            print("  dataset    : stored in bundle (length unknown)")
 
     print("\nUsage example (Python):")
-
     print("  bundle = load_ml_bundle('path/to/bundle.zip')")
 
     if predict_name and bundle.predict_fn is not None:
         print(f"  # Predict using helper '{predict_name}'")
-        print("  pred_da = bundle.predict(")
-        print("      R_dataset,                # xr.Dataset with lat/lon + predictors")
-        print("      brt_model=bundle.model,   # or cnn model, etc.")
-        if "feature_cols" in bundle.meta:
-            print("      feature_cols=bundle.meta['feature_cols'],")
-        print("  )")
+
+        if is_collection:
+            print("  # Example: predict all depths for one day from a BRF dataset R")
+            print("  pred = bundle.predict(")
+            print("      R_dataset,                  # xr.DataArray/xr.Dataset with lat/lon + predictors")
+            print("      brt_models=bundle.model,    # dict of models by depth bin")
+            if "feature_cols" in meta:
+                print("      feature_cols=bundle.meta['feature_cols'],")
+            print("      consts={'solar_hour': 12.0, 'type': 1},")
+            print("  )  # -> e.g. CHLA(time?, z, lat, lon)")
+        else:
+            print("  pred = bundle.predict(")
+            print("      R_dataset,                  # xr.DataArray/xr.Dataset with lat/lon + predictors")
+            print("      brt_model=bundle.model,     # single model")
+            if "feature_cols" in meta:
+                print("      feature_cols=bundle.meta['feature_cols'],")
+            print("  )")
     else:
-        print("  # This bundle has no stored predict helper; call bundle.model.predict(...) directly.")
+        if is_collection:
+            print("  # This bundle has no stored predict helper.")
+            print("  # 'bundle.model' is a collection (e.g. dict) of models:")
+            print("  #   e.g. bundle.model['CHLA_0_10'].predict(X)")
+        else:
+            print("  # This bundle has no stored predict helper; call bundle.model.predict(...) directly.")
 
     if plot_name and bundle.plot_fn is not None:
         print(f"\n  # Plot using helper '{plot_name}'")
@@ -484,8 +537,7 @@ def load_ml_bundle(zip_path):
 
     Returns:
         MLBundle instance with:
-          - model, meta
-          - X_train, X_test, y_train, y_test
+          - model, meta, data (dataset + indices)
           - predict_fn, plot_fn (if stored)
     """
     import json
@@ -511,20 +563,32 @@ def load_ml_bundle(zip_path):
             with open(tmp / "model.pkl", "rb") as f:
                 model = pickle.load(f)
 
+        # --- load dataset + indices ---
         with open(tmp / "data.pkl", "rb") as f:
             data = pickle.load(f)
 
-    # reconstruct helpers if present
-    predict_fn = _reconstruct_helper_from_meta(meta, "predict")
-    plot_fn = _reconstruct_helper_from_meta(meta, "plot")
+    # --- Reconstruct helpers (including predict/plot) in a shared namespace ---
+    helpers_src = meta.get("helpers", {})
+    ns = {}
+    predict_fn = None
+    plot_fn = None
+
+    if helpers_src:
+        for name, src in helpers_src.items():
+            exec(src, ns, ns)
+
+        pred_name = meta.get("predict_helper_name")
+        if pred_name:
+            predict_fn = ns.get(pred_name)
+
+        plot_name = meta.get("plot_helper_name")
+        if plot_name:
+            plot_fn = ns.get(plot_name)
 
     bundle = MLBundle(
         model=model,
         meta=meta,
-        X_train=data.get("X_train"),
-        X_test=data.get("X_test"),
-        y_train=data.get("y_train"),
-        y_test=data.get("y_test"),
+        data=data,
         predict_fn=predict_fn,
         plot_fn=plot_fn,
     )
@@ -533,36 +597,43 @@ def load_ml_bundle(zip_path):
 
     return bundle
 
+
+
 # ---- Make Predictions from Model
 
+# predictions single brt for a single depth
 def make_prediction_brt(
     R: xr.Dataset,
     brt_model,
     feature_cols,
     consts=None,
-    bundle_helpers=None,   # NEW → dict of functions reconstructed from bundle
 ) -> xr.DataArray:
+    """
+    Predict a single BRT depth-bin field on a lat/lon grid, automatically
+    constructing derived features (solar_hour, sin_time/cos_time, x_geo/y_geo/z_geo)
+    if they are requested in feature_cols and not already present.
+
+    Parameters
+    ----------
+    R : xr.Dataset
+        Dataset with lat, lon (and possibly time) plus any derived variables.
+    brt_model :
+        Fitted sklearn-like model with .predict().
+    feature_cols : list of str
+        Predictor names expected by the model.
+    consts : dict, optional
+        Constant feature values, e.g. {"solar_hour": 12.0, "type": 1}.
+
+    Returns
+    -------
+    xr.DataArray
+        Prediction on (lat, lon) as 'y_pred'.
+    """
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
 
     consts = consts or {}
-    bundle_helpers = bundle_helpers or {}
-
-    # ----------
-    # Helper lookup function
-    # ----------
-    def get_helper_or_fail(func_name, message):
-        fn = _get_helper(func_name, bundle_helpers)
-        if fn is None:
-            raise RuntimeError(
-                f"Required helper '{func_name}' was not found.\n"
-                f"{message}\n\n"
-                f"Options:\n"
-                f"  • If using a model bundle, reload with load_ml_bundle() so helpers are included.\n"
-                f"  • Otherwise import your helpers manually, e.g.:\n"
-                f"        import ml_utils as mu\n"
-                f"        {func_name} = mu.{func_name}\n"
-                f"  • Or pre-compute the feature and add it to your xarray.Dataset."
-            )
-        return fn
 
     # ----------
     # Make a working copy
@@ -575,27 +646,28 @@ def make_prediction_brt(
 
     # --- solar_hour ---
     if "solar_hour" in feature_cols and "solar_hour" not in ds and "solar_hour" not in consts:
-        add_solar = _get_helper("add_solar_hour_feature", bundle_helpers)
-        if add_solar is None:
+        if "add_solar_hour_feature" not in globals():
             raise RuntimeError(
-                "Feature 'solar_hour' is required but not found.\n"
-                "Please either:\n"
-                "  • load a model bundle that contains add_solar_hour_feature(), or\n"
-                "  • import ml_utils as mu and pass consts={'solar_hour': value}, or\n"
-                "  • add a 'solar_hour' variable to your xarray.Dataset."
+                "Feature 'solar_hour' is required but helper 'add_solar_hour_feature' "
+                "is not available.\n"
+                "Either define it (or include it in the bundle), provide "
+                "consts={'solar_hour': value}, or pre-add 'solar_hour' to your Dataset."
             )
-        ds = add_solar(ds)
+        ds = add_solar_hour_feature(ds)
 
     # --- seasonal sin/cos ---
     needs_sin = "sin_time" in feature_cols and "sin_time" not in ds and "sin_time" not in consts
     needs_cos = "cos_time" in feature_cols and "cos_time" not in ds and "cos_time" not in consts
 
     if needs_sin or needs_cos:
-        add_season = get_helper_or_fail(
-            "add_seasonal_time_features",
-            "Feature 'sin_time' or 'cos_time' is required but not present."
-        )
-        ds = add_season(ds, sin_name="sin_time", cos_name="cos_time")
+        if "add_seasonal_time_features" not in globals():
+            raise RuntimeError(
+                "Features 'sin_time'/'cos_time' are required but helper "
+                "'add_seasonal_time_features' is not available.\n"
+                "Define it (or include it in the bundle), or pre-add 'sin_time' "
+                "and 'cos_time' to your Dataset."
+            )
+        ds = add_seasonal_time_features(ds, time="time")  # adjust args if needed
 
     # --- spherical coords ---
     needs_x = "x_geo" in feature_cols and "x_geo" not in ds and "x_geo" not in consts
@@ -603,11 +675,13 @@ def make_prediction_brt(
     needs_z = "z_geo" in feature_cols and "z_geo" not in ds and "z_geo" not in consts
 
     if needs_x or needs_y or needs_z:
-        add_sph = get_helper_or_fail(
-            "add_spherical_coords",
-            "Spherical coordinate features are required but missing."
-        )
-        ds = add_sph(ds)
+        if "add_spherical_coords" not in globals():
+            raise RuntimeError(
+                "Spherical-coord features are required but helper 'add_spherical_coords' "
+                "is not available.\n"
+                "Define it (or include it in the bundle), or pre-add x_geo/y_geo/z_geo."
+            )
+        ds = add_spherical_coords(ds)
 
     # ----------
     # Stack and predict
@@ -626,6 +700,7 @@ def make_prediction_brt(
                     f"If this is a derived variable, ensure the helper function "
                     f"is available or add it manually."
                 )
+            # .values.reshape(n_pixel) to flatten all other dims (here just pixel)
             df_cols[feat] = ds_stack[feat].values.reshape(n_pixel)
 
     df_pred = pd.DataFrame(df_cols, columns=feature_cols)
@@ -634,15 +709,286 @@ def make_prediction_brt(
     valid_mask = ~df_pred.isna().any(axis=1)
     df_valid = df_pred[valid_mask]
 
-    y_pred_flat = np.full(n_pixel, np.nan)
+    y_pred_flat = np.full(n_pixel, np.nan, dtype=float)
     if len(df_valid) > 0:
         y_pred_flat[valid_mask.values] = brt_model.predict(df_valid)
 
     # reshape back
     pred_map = y_pred_flat.reshape(R.sizes["lat"], R.sizes["lon"])
-    return xr.DataArray(pred_map, coords={"lat": R["lat"], "lon": R["lon"]}, dims=("lat", "lon"))
+
+    return xr.DataArray(
+        pred_map,
+        coords={"lat": R["lat"], "lon": R["lon"]},
+        dims=("lat", "lon"),
+        name="y_pred",
+    )
 
 
+
+# Combine all BRTs for each depth and make a xr.Dataset of predictions
+def predict_all_depths_for_day(
+    R: xr.DataArray,         # (lat, lon, wavelength)
+    brt_models: dict,        # e.g. {"CHLA_0_10": model0, "CHLA_10_20": model1, ...}
+    feature_cols: list,
+    consts=None,
+    chunk_size_lat: int = 100,
+    time=None,               # e.g. "2024-07-15" or np.datetime64
+    z: np.ndarray | None = None,   # optional override for depth centers
+    z_name: str = "z",       # vertical dimension name
+):
+    """
+    Run BRT predictions for all depth bins for a single day.
+
+    Parameters
+    ----------
+    R : xr.DataArray
+        Predictor array of Rrs wavelengths from PACE on (lat, lon, wavelength) (no time dimension).
+    brt_models : dict
+        Mapping depth-label -> fitted model, e.g.
+        {"CHLA_0_10": model0, "CHLA_10_20": model1, ...}.
+        The last two underscore-separated tokens are assumed to be
+        depth start/end in meters, e.g. "CHLA_0_10" -> 0, 10.
+    feature_cols : list of str
+        Columns expected by the BRT models.
+    consts : dict, optional
+        Feature -> scalar value for constants (e.g. {"solar_hour": 12.0, "type": 1}).
+    chunk_size_lat : int
+        Number of latitude indices per chunk.
+    time : str or np.datetime64, optional
+        Time stamp for this prediction. If provided, a `time` dimension of length 1
+        is added to the output.
+    z : array-like, optional
+        Depth centers (same order as brt_models keys). If not given, centers are
+        inferred as (z_start + z_end)/2 from the model name.
+    z_name : str, default "z"
+        Name of the vertical dimension in the output.
+
+    Returns
+    -------
+    xr.DataArray
+        CHLA prediction with dims:
+            (time, z_name, lat, lon)      if `time` provided
+            (z_name, lat, lon)           otherwise
+
+        Coordinates:
+            z_name         : depth center (m)
+            f"{z_name}_start" : depth bin lower bound (m)
+            f"{z_name}_end"   : depth bin upper bound (m)
+    """
+    import numpy as np
+    import xarray as xr
+
+    consts = consts or {}
+    R = R.transpose("lat", "lon", "wavelength")
+
+    depth_labels = list(brt_models.keys())
+    n_depth = len(depth_labels)
+
+    # --- parse z_start / z_end / z_center from labels like ABC_0_10 ---
+    z_start_arr = np.full(n_depth, np.nan, dtype="float32")
+    z_end_arr   = np.full(n_depth, np.nan, dtype="float32")
+    z_center_arr = np.full(n_depth, np.nan, dtype="float32")
+
+    for i, label in enumerate(depth_labels):
+        parts = label.split("_")
+        if len(parts) >= 3:
+            try:
+                z0 = float(parts[-2])
+                z1 = float(parts[-1])
+                z_start_arr[i] = z0
+                z_end_arr[i]   = z1
+                z_center_arr[i] = 0.5 * (z0 + z1)
+            except ValueError:
+                # leave as NaN if parsing fails
+                pass
+
+    # if user provided z, override centers
+    if z is not None:
+        z_center_arr = np.asarray(z, dtype="float32")
+        if z_center_arr.shape[0] != n_depth:
+            raise ValueError(f"len(z)={len(z_center_arr)} does not match number of models={n_depth}")
+
+    nlat = R.sizes["lat"]
+    lat_coord = R["lat"]
+
+    depth_chunks = {label: [] for label in depth_labels}
+
+    # --- chunk over latitude ---
+    for start in range(0, nlat, chunk_size_lat):
+        stop = min(start + chunk_size_lat, nlat)
+        R_chunk = R.isel(lat=slice(start, stop))
+
+        for label, model in brt_models.items():
+            pred_chunk = make_prediction_brt(
+                R_chunk,
+                brt_model=model,
+                feature_cols=feature_cols,
+                consts=consts,
+            )
+            depth_chunks[label].append(pred_chunk)
+
+    # --- stitch each depth over lat, then stack into vertical dimension ---
+    per_depth = []
+    for idx, (label, chunks) in enumerate(depth_chunks.items()):
+        da = xr.concat(chunks, dim="lat").assign_coords(lat=lat_coord)
+        per_depth.append(da.expand_dims({z_name: [idx]}))
+
+    pred_all = xr.concat(per_depth, dim=z_name)  # (z, lat, lon)
+    pred_all.name = "CHLA"
+
+    # vertical coordinates
+    pred_all = pred_all.assign_coords(
+        {
+            z_name: z_center_arr,
+            f"{z_name}_start": (z_name, z_start_arr),
+            f"{z_name}_end":   (z_name, z_end_arr),
+        }
+    )
+
+    # optional time dimension
+    if time is not None:
+        time_val = np.datetime64(time)
+        pred_all = pred_all.expand_dims(time=[time_val])
+
+    # note about depth inference
+    pred_all.attrs.setdefault(
+        "depth_info",
+        f"Depth coordinates inferred from brt_models keys of form 'NAME_z0_z1'. "
+        f"z is the bin center, {z_name}_start/{z_name}_end are bin bounds (m)."
+    )
+
+    return pred_all
+
+# ---- Plot predictions
+
+def make_plot_pred_map(
+    da,
+    pred_label: str = "Prediction",
+    cmap_pred: str = "viridis",
+    time=None,
+    z=None,
+    z_start=None,
+    z_dim: str = "z",
+):
+    """
+    Plot a prediction slice from an xarray DataArray on a lat/lon grid.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        DataArray with dims:
+          - (time, z, lat, lon) or
+          - (z, lat, lon) or
+          - (lat, lon)
+    pred_label : str
+        Title and colorbar label.
+    cmap_pred : str
+        Matplotlib colormap name.
+    time :
+        Optional time selector. If None and 'time' is a dimension, the first time is used.
+    z :
+        Optional depth-center selector along `z_dim`. If provided, uses .sel(z_dim=z, method="nearest"). If None, the first z is used.
+    z_start :
+        Optional lower-bound depth (e.g. 10 for a 10–20 m bin). Only used if
+        `z_start` is present as a coordinate and `z` is not given. Selects the
+        index whose z_start is closest to this value.
+    z_dim : str
+        Name of the vertical dimension (default "z").
+    """
+    # Local imports so this helper is self-contained in the bundle
+    import numpy as np
+    import xarray as xr
+    import matplotlib.pyplot as plt
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+
+    sel = da
+
+    # --- Handle time selection ---
+    if "time" in sel.dims:
+        if time is None:
+            time_val = sel["time"].values[0]
+        else:
+            time_val = time
+        sel = sel.sel(time=time_val)
+
+    # --- Handle vertical selection ---
+    if z_dim in sel.dims:
+        if z is not None:
+            sel = sel.sel({z_dim: z}, method="nearest")
+        elif z_start is not None and "z_start" in sel.coords:
+            z_start_vals = sel["z_start"].values
+            idx = int(np.argmin(np.abs(z_start_vals - z_start)))
+            sel = sel.isel({z_dim: idx})
+        else:
+            sel = sel.isel({z_dim: 0})
+
+    if not (("lat" in sel.dims) and ("lon" in sel.dims)):
+        raise ValueError(
+            "make_plot_pred_map expects the final slice to have 'lat' and 'lon' dimensions."
+        )
+
+    vals = sel.values.ravel()
+    vals = vals[~np.isnan(vals)]
+    if vals.size == 0:
+        raise ValueError("Selected slice is all-NaN; nothing to plot.")
+
+    vmin, vmax = np.nanpercentile(vals, (2, 98))
+
+    fig, ax = plt.subplots(
+        1,
+        1,
+        figsize=(6, 4),
+        subplot_kw={"projection": ccrs.PlateCarree()},
+        constrained_layout=True,
+    )
+
+    ax.coastlines()
+    ax.add_feature(cfeature.LAND, facecolor="0.9")
+
+    im = ax.pcolormesh(
+        sel["lon"],
+        sel["lat"],
+        sel,
+        transform=ccrs.PlateCarree(),
+        vmin=vmin,
+        vmax=vmax,
+        cmap=cmap_pred,
+    )
+
+    # Build a more informative title
+    title = pred_label
+    pieces = []
+
+    if "time" in da.dims:
+        t_val = np.asarray(sel.coords["time"].values).item()
+        pieces.append(f"time={np.datetime_as_string(t_val, unit='D')}")
+
+    if z_dim in da.dims:
+        if z is not None:
+            pieces.append(f"{z_dim}≈{float(sel[z_dim].values):.1f} m")
+        elif z_start is not None and "z_start" in sel.coords:
+            z0 = float(sel["z_start"].values)
+            z1 = float(sel.coords.get("z_end", np.nan))
+            if np.isfinite(z1):
+                pieces.append(f"{z0:.1f}–{z1:.1f} m")
+            else:
+                pieces.append(f"{z0:.1f} m bin")
+        else:
+            zc = float(sel[z_dim].values)
+            pieces.append(f"{zc:.1f} m")
+
+    if pieces:
+        title = f"{pred_label} ({', '.join(pieces)})"
+
+    ax.set_title(title)
+    cbar = fig.colorbar(im, ax=ax, orientation="horizontal", fraction=0.06, pad=0.08)
+    cbar.set_label(pred_label)
+
+    plt.show()
+    return fig, ax
+
+    
 ## OLD
 
 # Save and Load fitted model
@@ -1586,10 +1932,6 @@ def add_sin_coords(ds):
         lat_sin=(('lat','lon'), np.sin(latr).astype('float32')),
     )
 
-import numpy as np
-import xarray as xr
-import pandas as pd
-
 def add_spherical_coords(obj, lat="lat", lon="lon"):
     """
     Add 3D unit-sphere coordinates (x_geo, y_geo, z_geo) computed from lat/lon.
@@ -1616,6 +1958,8 @@ def add_spherical_coords(obj, lat="lat", lon="lon"):
     -------
     xarray.Dataset or pandas.DataFrame
     """
+    import numpy as np, xarray as xr, pandas as pd
+
     # ---- xarray path --------------------------------------------------------
     if isinstance(obj, xr.Dataset):
         ds = obj
@@ -1661,10 +2005,6 @@ def add_spherical_coords(obj, lat="lat", lon="lon"):
         f"got {type(obj)}"
     )
 
-import numpy as np
-import xarray as xr
-import pandas as pd
-
 def add_seasonal_time_features(obj, ref_var="sst", time="time"):
     """
     Add seasonal time features (sin_time, cos_time) based on day-of-year.
@@ -1692,7 +2032,8 @@ def add_seasonal_time_features(obj, ref_var="sst", time="time"):
     -------
     xr.Dataset or pd.DataFrame
     """
-
+    import numpy as np, xarray as xr, pandas as pd
+    
     # ---------------- xarray path ----------------
     if isinstance(obj, xr.Dataset):
         ds = obj
@@ -1759,90 +2100,154 @@ def add_seasonal_time_features(obj, ref_var="sst", time="time"):
         f"got {type(obj)}"
     )
 
-import numpy as np
-import pandas as pd
 
-def add_solar_time_features_df(
-    df,
-    time_col="time",
-    lon_col="lon",
+def add_solar_time_feature(
+    obj,
+    time="time",
+    lon="lon",
     prefix="solar",
     assume_lon_range="auto",
+    ref_var=None,
 ):
     """
-    Add local solar time features to a pandas DataFrame.
+    Add local solar time features to either an xarray.Dataset or pandas.DataFrame.
 
-    Adds columns:
-      - f"{prefix}_hour"          : local solar time in hours [0, 24)
-      - f"{prefix}_sin_time"      : sin(2π * hour / 24)
-      - f"{prefix}_cos_time"      : cos(2π * hour / 24)
+    Adds:
+      - f"{prefix}_hour"      : local solar time in hours [0, 24)
+      - f"{prefix}_sin_time"  : sin(2π * hour / 24)
+      - f"{prefix}_cos_time"  : cos(2π * hour / 24)
 
     Local solar time is approximated as:
         solar_hour = (UTC_hour + lon_east / 15) % 24
 
     Parameters
     ----------
-    df : pandas.DataFrame
-        Must contain time and longitude columns.
-    time_col : str, default "time"
-        Name of the datetime-like column.
-    lon_col : str, default "lon"
-        Name of the longitude column (degrees, either [-180, 180] or [0, 360]).
-    prefix : str, default "solar"
-        Prefix for created columns: "<prefix>_hour", "<prefix>_sin_time", "<prefix>_cos_time".
-    assume_lon_range : {"auto", "180", "360"}, default "auto"
+    obj : xr.Dataset or pd.DataFrame
+    time : str
+        Name of time coord/column.
+    lon : str
+        Name of longitude coord/column (degrees, either [-180, 180] or [0, 360]).
+    prefix : str
+        Prefix for created columns/variables:
+        "<prefix>_hour", "<prefix>_sin_time", "<prefix>_cos_time".
+    assume_lon_range : {"auto", "180", "360"}
         How to interpret longitude range:
         - "auto": if any lon > 180, assume [0, 360] and convert to [-180, 180]
         - "180" : assume already in [-180, 180]
         - "360" : assume in [0, 360], convert to [-180, 180]
+    ref_var : str, optional (xarray only)
+        For Dataset case, if provided and obj[ref_var] is 2D/3D (e.g. time,lat,lon),
+        solar fields will be broadcast to that variable's shape.
 
     Returns
     -------
-    pandas.DataFrame
-        New DataFrame with added columns.
+    xr.Dataset or pd.DataFrame
     """
-    df = df.copy()
-
-    # Ensure time is datetime with UTC (or at least timezone-aware)
-    df[time_col] = pd.to_datetime(df[time_col], utc=True, errors="coerce")
-
-    # Handle longitude range
-    lon = df[lon_col].astype(float)
-
-    if assume_lon_range == "auto":
-        if (lon > 180).any():
-            # likely 0..360, convert to -180..180
-            lon = ((lon + 180) % 360) - 180
-    elif assume_lon_range == "360":
-        lon = ((lon + 180) % 360) - 180
-    # else: "180" -> leave as-is
-
-    # Replace back into df
-    df[lon_col] = lon
-
-    # UTC hour as float: hour + minute/60 + second/3600
-    t = df[time_col].dt
-    utc_hour = t.hour + t.minute / 60.0 + t.second / 3600.0
-
-    # Local solar hour approximation
-    solar_hour = (utc_hour + lon / 15.0) % 24.0
-
-    # Cyclical encodings
-    rad = 2 * np.pi * (solar_hour / 24.0)
-    sin_t = np.sin(rad)
-    cos_t = np.cos(rad)
-
-    # Column names
+    import numpy as np, xarray as xr, pandas as pd
+    
     hour_name = f"{prefix}_hour"
     sin_name = f"{prefix}_sin_time"
     cos_name = f"{prefix}_cos_time"
 
-    df[hour_name] = solar_hour.astype("float32")
-    df[sin_name] = sin_t.astype("float32")
-    df[cos_name] = cos_t.astype("float32")
+    # ---------------- xarray path ----------------
+    if isinstance(obj, xr.Dataset):
+        ds = obj
 
-    return df
+        if time not in ds.coords:
+            raise ValueError(f"Dataset has no '{time}' coordinate.")
+        if lon not in ds.coords and lon not in ds:
+            raise ValueError(f"Dataset has no '{lon}' coordinate/variable.")
 
+        # grab longitude as DataArray
+        lon_da = ds[lon] if lon in ds.coords else ds[lon]
+        lon_vals = lon_da.astype(float)
+
+        # Handle longitude range (this may touch memory for lon, but lon is usually small)
+        if assume_lon_range == "auto":
+            lon_np = np.asarray(lon_vals)
+            if np.nanmax(lon_np) > 180:
+                lon_vals = ((lon_vals + 180) % 360) - 180
+        elif assume_lon_range == "360":
+            lon_vals = ((lon_vals + 180) % 360) - 180
+        # else "180": leave as-is
+
+        # UTC hour from time coord (xarray dt-accessor, dask-friendly)
+        t = ds[time].dt
+        utc_hour = t.hour + t.minute / 60.0 + t.second / 3600.0  # DataArray 1D in time
+
+        # Broadcast utc_hour and lon to a common grid
+        # (e.g. (time, lon) or (time, lat, lon) depending on shapes)
+        utc_hour_b, lon_b = xr.broadcast(utc_hour, lon_vals)
+
+        # Compute solar hour
+        solar_hour = (utc_hour_b + lon_b / 15.0) % 24.0
+
+        # Cyclical encodings
+        rad = 2 * np.pi * (solar_hour / 24.0)
+        solar_sin = xr.apply_ufunc(np.sin, rad, dask="parallelized").astype("float32")
+        solar_cos = xr.apply_ufunc(np.cos, rad, dask="parallelized").astype("float32")
+
+        # If ref_var given, broadcast onto that variable's shape
+        if ref_var is not None and ref_var in ds:
+            solar_hour, _ = xr.broadcast(solar_hour, ds[ref_var])
+            solar_sin, _ = xr.broadcast(solar_sin, ds[ref_var])
+            solar_cos, _ = xr.broadcast(solar_cos, ds[ref_var])
+
+        return ds.assign(
+            **{
+                hour_name: solar_hour.astype("float32"),
+                sin_name: solar_sin,
+                cos_name: solar_cos,
+            }
+        )
+
+    # ---------------- pandas path ----------------
+    if isinstance(obj, pd.DataFrame):
+        df = obj.copy()
+
+        if time not in df.columns:
+            raise ValueError(f"DataFrame has no '{time}' column.")
+        if lon not in df.columns:
+            raise ValueError(f"DataFrame has no '{lon}' column.")
+
+        # Ensure datetime with UTC
+        df[time] = pd.to_datetime(df[time], utc=True, errors="coerce")
+
+        # Handle longitude range
+        lon_series = df[lon].astype(float)
+
+        if assume_lon_range == "auto":
+            if (lon_series > 180).any():
+                lon_series = ((lon_series + 180) % 360) - 180
+        elif assume_lon_range == "360":
+            lon_series = ((lon_series + 180) % 360) - 180
+        # else "180": leave as-is
+
+        df[lon] = lon_series
+
+        # UTC hour as float
+        t = df[time].dt
+        utc_hour = t.hour + t.minute / 60.0 + t.second / 3600.0
+
+        # Local solar hour
+        solar_hour = (utc_hour + lon_series / 15.0) % 24.0
+
+        # Cyclical encodings
+        rad = 2 * np.pi * (solar_hour / 24.0)
+        sin_t = np.sin(rad)
+        cos_t = np.cos(rad)
+
+        df[hour_name] = solar_hour.astype("float32")
+        df[sin_name] = sin_t.astype("float32")
+        df[cos_name] = cos_t.astype("float32")
+
+        return df
+
+    # ---------------- unsupported type ----------------
+    raise TypeError(
+        f"add_solar_time_features expected xarray.Dataset or pandas.DataFrame, "
+        f"got {type(obj)}"
+    )
     
 from scipy.ndimage import distance_transform_edt
 
@@ -1853,6 +2258,7 @@ def add_distance_to_coast(ds: xr.Dataset,
     Add distance-to-coast (km) for ocean pixels; 0 on land.
     Assumes lat/lon on a regular grid. Uses EDT with anisotropic sampling.
     """
+    
     if mask_var not in ds:
         raise KeyError(f"{mask_var} not found in dataset.")
     if not {"lat","lon"} <= set(ds.coords):
