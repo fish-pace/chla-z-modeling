@@ -199,10 +199,9 @@ Eli Holmes
 </ul>
 </section>
 
-<section>
 <section id="what-does-hyperspectral-rrs-look-like" class="title-slide slide level1 center">
 <h1>📈 What Does Hyperspectral Rrs Look Like?</h1>
-<div id="77cabf96" class="cell" data-execution_count="2">
+<div id="dc490115" class="cell" data-execution_count="2">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -212,10 +211,7 @@ Eli Holmes
 </div>
 </div>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="why-rrs-contains-subsurface-information" class="title-slide slide level1 center">
 <h1>📡 Why Rrs Contains Subsurface Information</h1>
 <p>Even though Rrs is <em>measured above the surface</em>:</p>
@@ -226,10 +222,7 @@ Eli Holmes
 </ul>
 <p>PACE’s spectral richness gives us new power to infer <strong>what’s happening at depth</strong>.</p>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="in-situ-platforms-ooi" class="title-slide slide level1 center">
 <h1>⛓️ In-situ Platforms: OOI</h1>
 <ul>
@@ -240,13 +233,10 @@ Eli Holmes
 <li>Key for shallow structure, seasonal cycles, and diel variability</li>
 </ul>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="ooi-platforms" class="title-slide slide level1 center">
 <h1>OOI Platforms</h1>
-<div id="4a674bfd" class="cell" data-execution_count="3">
+<div id="38844926" class="cell" data-execution_count="3">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
@@ -256,10 +246,7 @@ Eli Holmes
 </div>
 </div>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="in-situ-platforms-bio-argo" class="title-slide slide level1 center">
 <h1>🤖 In-situ Platforms: Bio-Argo</h1>
 <ul>
@@ -269,7 +256,7 @@ Eli Holmes
 </li>
 <li>Provides chlorophyll profiles around the globe</li>
 </ul>
-<div id="9d3457ca" class="cell" data-execution_count="4">
+<div id="932e4783" class="cell" data-execution_count="4">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -278,7 +265,7 @@ Eli Holmes
 </div>
 </div>
 </div>
-<div id="64036bf9" class="cell" data-execution_count="5">
+<div id="ba14505f" class="cell" data-execution_count="5">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -288,13 +275,10 @@ Eli Holmes
 </div>
 </div>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="a-chlorophyll-profile-from-an-bgc-argo-buoy" class="title-slide slide level1 center">
 <h1>A chlorophyll profile from an BGC-Argo buoy</h1>
-<div id="3976b37f" class="cell" data-execution_count="7">
+<div id="b8fc429c" class="cell" data-execution_count="7">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -304,18 +288,12 @@ Eli Holmes
 </div>
 </div>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="general-idea" class="title-slide slide level1 center">
 <h1>General Idea</h1>
 <p>Train CHLA(z) on hyperspectral Rrs using Boosted Regression Trees</p>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="depth-binning-critical-step" class="title-slide slide level1 center">
 <h1>🧰 Depth Binning (Critical Step)</h1>
 <p>Raw profiles come at irregular depths → ML models need consistent targets.</p>
@@ -330,10 +308,7 @@ Eli Holmes
 </ul>
 <p>👉 This is why we train <strong>one BRT per depth bin</strong> instead of forcing a single parametric profile shape.</p>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="matching-step-match-in-situ-latlonday-to-pace-level-3-daily-data" class="title-slide slide level1 center">
 <h1>🗃️ Matching Step: Match in-situ lat/lon/day to PACE Level 3 daily data</h1>
 <ul>
@@ -343,10 +318,7 @@ Eli Holmes
 <li>Result: 5540 in-situ CHLA depth profiles. Roughly 450 to 700 for each depth bin.</li>
 </ul>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="the-modeling-step" class="title-slide slide level1 center">
 <h1>The modeling step</h1>
 <ul>
@@ -357,21 +329,7 @@ Eli Holmes
 <li>Evaluate performance using the test data (CHLA depth profiles)</li>
 </ul>
 </section>
-<section class="slide level2">
 
-</section>
-<section class="slide level2">
-
-</section></section>
-<section>
-<section id="where-are-the-training-profiles" class="title-slide slide level1 center">
-<h1>🌍 Where Are the Training Profiles?</h1>
-
-</section>
-<section class="slide level2">
-
-</section></section>
-<section>
 <section id="what-is-a-boosted-regression-tree-brt" class="title-slide slide level1 center">
 <h1>🌳 What is a Boosted Regression Tree (BRT)?</h1>
 <ul>
@@ -389,10 +347,7 @@ Eli Holmes
 </ul>
 <p>Perfect for mapping <strong>hyperspectral Rrs → scalar CHLA at a given depth</strong>.</p>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="one-brt-per-depth-bin" class="title-slide slide level1 center">
 <h1>🪜 One BRT Per Depth Bin</h1>
 <p>Each model predicts <strong>CHLA in a single depth range</strong>:</p>
@@ -415,13 +370,10 @@ Eli Holmes
 <li>Enables simple diagnostics: R², RMSE, bias vs depth.</li>
 </ul>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="results" class="title-slide slide level1 center">
 <h1>🧮 Results</h1>
-<div id="e42048f3" class="cell" data-execution_count="8">
+<div id="93ecdf9e" class="cell" data-execution_count="8">
 <div class="cell-output cell-output-stdout">
 <pre><code>
 Loaded ML bundle from: models/brt_chla_profiles_bundle.zip
@@ -450,239 +402,102 @@ Usage example (Python):
 </div>
 </div>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="performance" class="title-slide slide level1 center">
 <h1>Performance</h1>
 <p>Overall we see a close match between our preditions and our test data for CHLA in the upper 10m.</p>
-<div id="36ddec1a" class="cell" data-execution_count="10">
+<div id="a6ac9eee" class="cell" data-execution_count="12">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
-<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-11-output-1.png" width="469" height="469"></p>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-13-output-1.png" width="469" height="469"></p>
 </figure>
 </div>
 </div>
 </div>
 </section>
-<section class="slide level2">
 
-</section></section>
 <section>
 <section id="prediction-of-chla-0-to-10m" class="title-slide slide level1 center">
 <h1>Prediction of CHLA 0 to 10m</h1>
 <p>Using PACE data for hyperspectral Rrs, we can make a prediction of surface CHLA. Note it is not our goal to predict surface CHLA as there are many existing surface CHLA products. We will be predicting CHLA depth profiles 0 to 200m. But let’s look at this first.</p>
 <p>Let’s compare to PACE’s surface CHLA product as a first pass check, but note that these are different products trained on different in-situ data.</p>
-</section>
-<section class="slide level2">
-
-<div id="a5ec4c74" class="cell" data-execution_count="14">
+<div id="b4a1a823" class="cell" data-execution_count="16">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
-<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-15-output-1.png" width="1295" height="489"></p>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-17-output-1.png" width="1295" height="489"></p>
 </figure>
 </div>
 </div>
 </div>
-</section>
-<section id="scatter-plot-of-pace-chlor_a-to-brt-with-type-1-ooi-and-solar_hour-0-midnight" class="slide level2">
-<h2>Scatter plot of PACE chlor_a to BRT with type = 1 (ooi) and solar_hour = 0 (midnight)</h2>
 <p>We do not expect these to be identical as the PACE chlor_a is based on the classic Rrs ratio algorithm while the BRT uses the whole spectrum but most importantly was trained on Argo and OOI florometer measurements.</p>
+</section>
+<section id="scatter-plot" class="slide level2">
+<h2>Scatter plot</h2>
+<p>PACE chlor_a to BRT with type = 1 (ooi) and solar_hour = 0 (midnight)</p>
 <p>Notice that at high PACE <code>chlor_a</code>, the BRT model predicts lower <code>CHLA_0_10</code>. We might be able to correct this by using the whole CHLA depth profile (next section).</p>
-<div id="0b04ed5b" class="cell" data-execution_count="15">
+<div id="f6c1fdb1" class="cell" data-execution_count="17">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
-<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-16-output-1.png" width="469" height="469"></p>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-18-output-1.png" width="469" height="469"></p>
 </figure>
 </div>
 </div>
 </div>
-</section>
-<section class="slide level2">
-
 </section></section>
-<section>
 <section id="global-prediction" class="title-slide slide level1 center">
 <h1>Global prediction</h1>
 <p>We can do this for the whole globe.</p>
 
 <img data-src="figures/global_CHLA_0_10_pred.png" class="r-stretch"></section>
-<section class="slide level2">
 
-</section></section>
-<section>
-<section id="depth-wise-metrics-for-each-bin-code" class="title-slide slide level1 center">
-<h1>📏 Depth-wise Metrics for Each Bin (Code)</h1>
-<div id="b4f048cc" class="cell" data-execution_count="17">
-<div class="cell-output cell-output-display" data-execution_count="17">
-<div>
-<style scoped="">
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
+<section id="lets-predict-chla-depth-profiles" class="title-slide slide level1 center">
+<h1>Let’s predict CHLA depth profiles</h1>
 
-    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-
-    .dataframe thead th {
-        text-align: right;
-    }
-</style>
-
-<table class="dataframe caption-top" data-quarto-postprocess="true" data-border="1">
-<thead>
-<tr class="header" style="text-align: right;">
-<th data-quarto-table-cell-role="th"></th>
-<th data-quarto-table-cell-role="th">var</th>
-<th data-quarto-table-cell-role="th">z_start</th>
-<th data-quarto-table-cell-role="th">z_end</th>
-<th data-quarto-table-cell-role="th">z_center</th>
-<th data-quarto-table-cell-role="th">N</th>
-<th data-quarto-table-cell-role="th">r2_log</th>
-<th data-quarto-table-cell-role="th">rmse_log</th>
-<th data-quarto-table-cell-role="th">bias_log</th>
-<th data-quarto-table-cell-role="th">rmse_lin</th>
-<th data-quarto-table-cell-role="th">bias_lin</th>
-<th data-quarto-table-cell-role="th">rmse_rel</th>
-<th data-quarto-table-cell-role="th">bias_rel</th>
-<th data-quarto-table-cell-role="th">p90_abs_err</th>
-<th data-quarto-table-cell-role="th">median_abs_err</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td data-quarto-table-cell-role="th">0</td>
-<td>CHLA_0_10</td>
-<td>0</td>
-<td>10</td>
-<td>5.0</td>
-<td>749</td>
-<td>0.809560</td>
-<td>0.316731</td>
-<td>-0.005965</td>
-<td>0.820218</td>
-<td>0.142584</td>
-<td>1.477031</td>
-<td>0.256762</td>
-<td>0.477269</td>
-<td>0.065079</td>
-</tr>
-<tr class="even">
-<td data-quarto-table-cell-role="th">1</td>
-<td>CHLA_10_20</td>
-<td>10</td>
-<td>20</td>
-<td>15.0</td>
-<td>466</td>
-<td>0.831825</td>
-<td>0.302410</td>
-<td>-0.012763</td>
-<td>0.836843</td>
-<td>0.139706</td>
-<td>1.593268</td>
-<td>0.265987</td>
-<td>0.419566</td>
-<td>0.042121</td>
-</tr>
-<tr class="odd">
-<td data-quarto-table-cell-role="th">2</td>
-<td>CHLA_20_30</td>
-<td>20</td>
-<td>30</td>
-<td>25.0</td>
-<td>578</td>
-<td>0.847393</td>
-<td>0.263076</td>
-<td>-0.001601</td>
-<td>0.902782</td>
-<td>0.133790</td>
-<td>1.547111</td>
-<td>0.229278</td>
-<td>0.543550</td>
-<td>0.083541</td>
-</tr>
-<tr class="even">
-<td data-quarto-table-cell-role="th">3</td>
-<td>CHLA_30_40</td>
-<td>30</td>
-<td>40</td>
-<td>35.0</td>
-<td>624</td>
-<td>0.833696</td>
-<td>0.247387</td>
-<td>-0.008640</td>
-<td>0.497728</td>
-<td>0.070651</td>
-<td>0.932662</td>
-<td>0.132388</td>
-<td>0.450189</td>
-<td>0.093405</td>
-</tr>
-<tr class="odd">
-<td data-quarto-table-cell-role="th">4</td>
-<td>CHLA_40_50</td>
-<td>40</td>
-<td>50</td>
-<td>45.0</td>
-<td>619</td>
-<td>0.769028</td>
-<td>0.256524</td>
-<td>-0.002942</td>
-<td>0.497274</td>
-<td>0.091620</td>
-<td>1.037835</td>
-<td>0.191215</td>
-<td>0.385455</td>
-<td>0.103765</td>
-</tr>
-</tbody>
-</table>
-
-</div>
-</div>
-</div>
 </section>
-<section class="slide level2">
 
-<div id="14b7cd51" class="cell" data-execution_count="18">
-<div class="cell-output cell-output-display">
-<div>
-<figure>
-<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-19-output-1.png" width="1138" height="567"></p>
-</figure>
-</div>
-</div>
-</div>
-</section>
-<section class="slide level2">
-
-</section></section>
-<section>
 <section id="example-chla-profiles-observed-vs-brt" class="title-slide slide level1 center">
 <h1>👁️ Example CHLA Profiles: Observed vs BRT</h1>
-<div id="5ddd13a2" class="cell" data-execution_count="19">
+<div id="16e86f86" class="cell" data-execution_count="18">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
-<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-20-output-1.png" width="1439" height="763"></p>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-19-output-1.png" width="1439" height="763"></p>
 </figure>
 </div>
 </div>
 </div>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
+<section id="depth-wise-metrics-for-each-bin" class="title-slide slide level1 center">
+<h1>📏 Depth-wise Metrics for Each Bin</h1>
+<ul>
+<li>Errors for depth bin prediction</li>
+<li>Location of peak CHLA</li>
+<li>Height of peak CHLA</li>
+<li>Integrated CHLA from 0 to 200m</li>
+</ul>
+</section>
+
+<section id="proportional-errors-for-depth-bins" class="title-slide slide level1 center">
+<h1>Proportional Errors for Depth Bins</h1>
+<div id="8664dea4" class="cell" data-execution_count="20">
+<div class="cell-output cell-output-display">
+<div>
+<figure>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-21-output-1.png" width="1138" height="567"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
+
 <section id="peak-depth-and-integrated-chla-metrics-code" class="title-slide slide level1 center">
 <h1>📡 Peak Depth and Integrated CHLA Metrics (Code)</h1>
-<div id="fe172ed5" class="cell" data-execution_count="20">
-<div class="cell-output cell-output-display" data-execution_count="20">
+<div id="b45b13c1" class="cell" data-execution_count="21">
+<div class="cell-output cell-output-display" data-execution_count="21">
 <div>
 <style scoped="">
     .dataframe tbody tr th:only-of-type {
@@ -781,28 +596,28 @@ Usage example (Python):
 </div>
 </div>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
+<section id="peak-depth-and-height" class="title-slide slide level1 center">
+<h1>📉 Peak Depth and Height</h1>
+
+</section>
+
 <section id="integrated-chla-0200-m-obs-vs-pred" class="title-slide slide level1 center">
 <h1>📉 Integrated CHLA (0–200 m): Obs vs Pred</h1>
-<div id="19c4605a" class="cell" data-execution_count="21">
+<div id="1dc828fa" class="cell" data-execution_count="22">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
-<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-22-output-1.png" width="469" height="468"></p>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-23-output-1.png" width="469" height="468"></p>
 </figure>
 </div>
 </div>
 </div>
 </section>
-<section class="slide level2">
 
-</section></section>
 <section>
-<section id="toward-global-maps-of-chla-profiles" class="title-slide slide level1 center">
-<h1>🗺️ Toward Global Maps of CHLA Profiles</h1>
+<section id="next-step-toward-global-maps-of-chla-profiles" class="title-slide slide level1 center">
+<h1>🗺️ Next Step: Toward Global Maps of CHLA Profiles</h1>
 <p>Once the per-depth-bin BRTs are trained:</p>
 <ul>
 <li>Apply them to each PACE pixel with valid Rrs(λ).</li>
@@ -814,7 +629,7 @@ Usage example (Python):
 <li>Biomass-weighted mean depth</li>
 </ul></li>
 </ul>
-<p>This moves us toward <strong>global, depth-resolved phytoplankton structure from space</strong>.</p>
+<p>This moves us toward <strong>global, depth-resolved CHLA density from space</strong>.</p>
 </section>
 <section class="slide level2">
 

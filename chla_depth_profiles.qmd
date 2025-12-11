@@ -443,6 +443,224 @@ X_test = bundle.data["X_test"]
 y_train_all = bundle.data["y_train"]
 y_test_all = bundle.data["y_test"]
 ```
+```{python}
+# Depth-wise Metrics for Each Bin (Code)
+from sklearn.metrics import r2_score, mean_squared_error
+import numpy as np
+
+def model_fit_metrics(
+    var,
+    dataset,
+    brt_model,
+    idx,
+    extras=("solar_hour", "type"),
+):
+    """
+    Compute metrics for a *fitted* BRT for one CHLA_A_B bin column `var`
+    using a specified subset of rows (idx).
+
+    Parameters
+    ----------
+    var : str
+        CHLA column name like "CHLA_10_20".
+    dataset : pd.DataFrame
+        Full dataset used for training/validation.
+    brt_model :
+        Fitted HistGradientBoostingRegressor (or compatible .predict() model).
+    idx : array-like of int
+        Row indices to use for evaluation (e.g. train_idx, test_idx, valid_idx).
+    extras : sequence of str, optional
+        Names of extra predictor columns beyond the Rrs ones.
+
+    Returns
+    -------
+    metrics : dict
+        {
+          "N": int,
+          "r2_log": float,
+          "rmse_log": float,
+          "bias_log": float,
+          "rmse_lin": float,
+          "bias_lin": float,
+          "rmse_rel": float,
+          "bias_rel": float,
+          "p90_abs_err": float,
+          "median_abs_err": float,
+        }
+    y_pred_lin : np.ndarray
+        Predicted CHLA (linear scale) for the used rows.
+    y_true_lin : np.ndarray
+        True CHLA (linear scale) for the used rows.
+    """
+    y_col = var
+
+    # Rrs predictor columns
+    rrs_cols = [
+        c for c in dataset.columns
+        if c.startswith("pace_Rrs_") and c[-1].isdigit()
+    ]
+
+    extras = list(extras)
+
+    # Subset the dataset to the index set and relevant columns
+    df = dataset.loc[idx, ["time", "lat", "lon", y_col] + rrs_cols + extras].copy()
+    df = df.rename(columns={y_col: "y"})
+
+    # Keep only positive, finite CHLA
+    mask_valid = np.isfinite(df["y"]) & (df["y"] > 0)
+    df = df[mask_valid]
+
+    if df.empty:
+        metrics = {
+            "N": 0,
+            "r2_log": np.nan,
+            "rmse_log": np.nan,
+            "bias_log": np.nan,
+            "rmse_lin": np.nan,
+            "bias_lin": np.nan,
+            "rmse_rel": np.nan,
+            "bias_rel": np.nan,
+            "p90_abs_err": np.nan,
+            "median_abs_err": np.nan,
+        }
+        return metrics, np.array([]), np.array([])
+
+    # Log10 transform for the model space
+    y_log = np.log10(df["y"].values.astype(float))
+    X = df[rrs_cols + extras]
+
+    # ---- log10-scale metrics ----
+    y_pred_log = brt_model.predict(X)
+    y_true_log = y_log
+
+    r2_log = r2_score(y_true_log, y_pred_log)
+    rmse_log = np.sqrt(mean_squared_error(y_true_log, y_pred_log))
+    bias_log = np.mean(y_true_log - y_pred_log)
+
+    # Number of samples
+    N = len(y_true_log)
+
+    # ---- back-transform for linear-scale metrics ----
+    y_true_lin = 10.0**y_true_log
+    y_pred_lin = 10.0**y_pred_log
+
+    diff = y_true_lin - y_pred_lin
+    rmse_lin = np.sqrt(mean_squared_error(y_true_lin, y_pred_lin))
+    bias_lin = np.mean(diff)
+
+    mean_true = np.mean(y_true_lin)
+    if mean_true > 0:
+        rmse_rel = rmse_lin / mean_true
+        bias_rel = bias_lin / mean_true
+    else:
+        rmse_rel = np.nan
+        bias_rel = np.nan
+
+    abs_diff = np.abs(diff)
+    p90_abs_err = np.percentile(abs_diff, 90)
+    median_abs_err = np.median(abs_diff)
+
+    metrics = {
+        "N": N,
+        "r2_log": r2_log,
+        "rmse_log": rmse_log,
+        "bias_log": bias_log,
+        "rmse_lin": rmse_lin,
+        "bias_lin": bias_lin,
+        "rmse_rel": rmse_rel,
+        "bias_rel": bias_rel,
+        "p90_abs_err": p90_abs_err,
+        "median_abs_err": median_abs_err,
+    }
+
+    return metrics, y_pred_lin, y_true_lin
+
+import numpy as np
+import pandas as pd
+
+def parse_depth_bin(col):
+    """
+    Expect names like CHLA_0_10, CHLA_10_20, etc.
+    Returns (z_start, z_end) as ints.
+    """
+    _, a, b = col.split("_")
+    return int(a), int(b)
+
+def depth_metrics_table(
+    brt_models,
+    dataset,
+    idx,
+    extras=("solar_hour", "type"),
+):
+    """
+    Compute model_fit_metrics for all CHLA depth bins and return as a DataFrame.
+
+    Parameters
+    ----------
+    brt_models : dict
+        Mapping from CHLA bin name -> fitted model, e.g. {"CHLA_0_10": model, ...}
+    dataset : pd.DataFrame
+        Full dataset used for training/validation.
+    idx : array-like of int
+        Row indices for evaluation (e.g. train_idx, test_idx, valid_idx, etc.).
+    extras : sequence of str, optional
+        Extra predictor column names (beyond pace_Rrs_*).
+
+    Returns
+    -------
+    metrics_df : pd.DataFrame
+        One row per depth bin with columns:
+          ["var", "z_start", "z_end", "z_center", ...all metrics from model_fit_metrics...]
+    """
+    extras = list(extras)
+
+    # Depth bins from the model keys
+    chl_cols = list(brt_models.keys())
+    chl_cols = sorted(chl_cols, key=lambda c: parse_depth_bin(c)[0])
+
+    rows = []
+
+    for var in chl_cols:
+        z_start, z_end = parse_depth_bin(var)
+        z_center = 0.5 * (z_start + z_end)
+
+        model = brt_models[var]
+
+        # metrics, y_pred_lin, y_true_lin come from the helper we defined earlier
+        metrics, y_pred_lin, y_true_lin = model_fit_metrics(
+            var=var,
+            dataset=dataset,
+            brt_model=model,
+            idx=idx,
+            extras=extras,
+        )
+
+        row = {
+            "var": var,
+            "z_start": z_start,
+            "z_end": z_end,
+            "z_center": z_center,
+        }
+        row.update(metrics)   # add all metric keys/values
+
+        rows.append(row)
+
+    metrics_df = pd.DataFrame(rows)
+    metrics_df = metrics_df.sort_values("z_center").reset_index(drop=True)
+    return metrics_df
+```
+
+```{python}
+metrics_df = depth_metrics_table(
+    brt_models,
+    dataset,
+    test_idx,
+    extras=("solar_hour", "type"),
+)
+# Use depth centers from the metrics table
+# used in the plots
+depth_centers = metrics_df["z_center"].values
+```
 
 # Performance
 
@@ -964,222 +1182,14 @@ plt.show()
 * Integrated CHLA from 0 to 200m
 
 ```{python}
-# Depth-wise Metrics for Each Bin (Code)
-from sklearn.metrics import r2_score, mean_squared_error
-import numpy as np
-
-def model_fit_metrics(
-    var,
-    dataset,
-    brt_model,
-    idx,
-    extras=("solar_hour", "type"),
-):
-    """
-    Compute metrics for a *fitted* BRT for one CHLA_A_B bin column `var`
-    using a specified subset of rows (idx).
-
-    Parameters
-    ----------
-    var : str
-        CHLA column name like "CHLA_10_20".
-    dataset : pd.DataFrame
-        Full dataset used for training/validation.
-    brt_model :
-        Fitted HistGradientBoostingRegressor (or compatible .predict() model).
-    idx : array-like of int
-        Row indices to use for evaluation (e.g. train_idx, test_idx, valid_idx).
-    extras : sequence of str, optional
-        Names of extra predictor columns beyond the Rrs ones.
-
-    Returns
-    -------
-    metrics : dict
-        {
-          "N": int,
-          "r2_log": float,
-          "rmse_log": float,
-          "bias_log": float,
-          "rmse_lin": float,
-          "bias_lin": float,
-          "rmse_rel": float,
-          "bias_rel": float,
-          "p90_abs_err": float,
-          "median_abs_err": float,
-        }
-    y_pred_lin : np.ndarray
-        Predicted CHLA (linear scale) for the used rows.
-    y_true_lin : np.ndarray
-        True CHLA (linear scale) for the used rows.
-    """
-    y_col = var
-
-    # Rrs predictor columns
-    rrs_cols = [
-        c for c in dataset.columns
-        if c.startswith("pace_Rrs_") and c[-1].isdigit()
-    ]
-
-    extras = list(extras)
-
-    # Subset the dataset to the index set and relevant columns
-    df = dataset.loc[idx, ["time", "lat", "lon", y_col] + rrs_cols + extras].copy()
-    df = df.rename(columns={y_col: "y"})
-
-    # Keep only positive, finite CHLA
-    mask_valid = np.isfinite(df["y"]) & (df["y"] > 0)
-    df = df[mask_valid]
-
-    if df.empty:
-        metrics = {
-            "N": 0,
-            "r2_log": np.nan,
-            "rmse_log": np.nan,
-            "bias_log": np.nan,
-            "rmse_lin": np.nan,
-            "bias_lin": np.nan,
-            "rmse_rel": np.nan,
-            "bias_rel": np.nan,
-            "p90_abs_err": np.nan,
-            "median_abs_err": np.nan,
-        }
-        return metrics, np.array([]), np.array([])
-
-    # Log10 transform for the model space
-    y_log = np.log10(df["y"].values.astype(float))
-    X = df[rrs_cols + extras]
-
-    # ---- log10-scale metrics ----
-    y_pred_log = brt_model.predict(X)
-    y_true_log = y_log
-
-    r2_log = r2_score(y_true_log, y_pred_log)
-    rmse_log = np.sqrt(mean_squared_error(y_true_log, y_pred_log))
-    bias_log = np.mean(y_true_log - y_pred_log)
-
-    # Number of samples
-    N = len(y_true_log)
-
-    # ---- back-transform for linear-scale metrics ----
-    y_true_lin = 10.0**y_true_log
-    y_pred_lin = 10.0**y_pred_log
-
-    diff = y_true_lin - y_pred_lin
-    rmse_lin = np.sqrt(mean_squared_error(y_true_lin, y_pred_lin))
-    bias_lin = np.mean(diff)
-
-    mean_true = np.mean(y_true_lin)
-    if mean_true > 0:
-        rmse_rel = rmse_lin / mean_true
-        bias_rel = bias_lin / mean_true
-    else:
-        rmse_rel = np.nan
-        bias_rel = np.nan
-
-    abs_diff = np.abs(diff)
-    p90_abs_err = np.percentile(abs_diff, 90)
-    median_abs_err = np.median(abs_diff)
-
-    metrics = {
-        "N": N,
-        "r2_log": r2_log,
-        "rmse_log": rmse_log,
-        "bias_log": bias_log,
-        "rmse_lin": rmse_lin,
-        "bias_lin": bias_lin,
-        "rmse_rel": rmse_rel,
-        "bias_rel": bias_rel,
-        "p90_abs_err": p90_abs_err,
-        "median_abs_err": median_abs_err,
-    }
-
-    return metrics, y_pred_lin, y_true_lin
-
-import numpy as np
-import pandas as pd
-
-def parse_depth_bin(col):
-    """
-    Expect names like CHLA_0_10, CHLA_10_20, etc.
-    Returns (z_start, z_end) as ints.
-    """
-    _, a, b = col.split("_")
-    return int(a), int(b)
-
-def depth_metrics_table(
-    brt_models,
-    dataset,
-    idx,
-    extras=("solar_hour", "type"),
-):
-    """
-    Compute model_fit_metrics for all CHLA depth bins and return as a DataFrame.
-
-    Parameters
-    ----------
-    brt_models : dict
-        Mapping from CHLA bin name -> fitted model, e.g. {"CHLA_0_10": model, ...}
-    dataset : pd.DataFrame
-        Full dataset used for training/validation.
-    idx : array-like of int
-        Row indices for evaluation (e.g. train_idx, test_idx, valid_idx, etc.).
-    extras : sequence of str, optional
-        Extra predictor column names (beyond pace_Rrs_*).
-
-    Returns
-    -------
-    metrics_df : pd.DataFrame
-        One row per depth bin with columns:
-          ["var", "z_start", "z_end", "z_center", ...all metrics from model_fit_metrics...]
-    """
-    extras = list(extras)
-
-    # Depth bins from the model keys
-    chl_cols = list(brt_models.keys())
-    chl_cols = sorted(chl_cols, key=lambda c: parse_depth_bin(c)[0])
-
-    rows = []
-
-    for var in chl_cols:
-        z_start, z_end = parse_depth_bin(var)
-        z_center = 0.5 * (z_start + z_end)
-
-        model = brt_models[var]
-
-        # metrics, y_pred_lin, y_true_lin come from the helper we defined earlier
-        metrics, y_pred_lin, y_true_lin = model_fit_metrics(
-            var=var,
-            dataset=dataset,
-            brt_model=model,
-            idx=idx,
-            extras=extras,
-        )
-
-        row = {
-            "var": var,
-            "z_start": z_start,
-            "z_end": z_end,
-            "z_center": z_center,
-        }
-        row.update(metrics)   # add all metric keys/values
-
-        rows.append(row)
-
-    metrics_df = pd.DataFrame(rows)
-    metrics_df = metrics_df.sort_values("z_center").reset_index(drop=True)
-    return metrics_df
+# code for metrics is abover where model loaded
 ```
-
----
 
 # Proportional Errors for Depth Bins
 
 ```{python}
 fig, axes = plt.subplots(1, 3, figsize=(12, 6), sharey=True)
 ax_r2, ax_rmse, ax_bias = axes
-
-# Use depth centers from the metrics table
-depth_centers = metrics_df["z_center"].values
 
 # ---- Panel 1: R² (log10-scale fit) ----
 r2_log_vals = metrics_df["r2_log"].values
@@ -1477,9 +1487,7 @@ plt.tight_layout()
 plt.show()
 ```
 
----
-
-# 🗺️ Toward Global Maps of CHLA Profiles
+# 🗺️ Next Step: Toward Global Maps of CHLA Profiles
 
 Once the per-depth-bin BRTs are trained:
 
@@ -1490,7 +1498,7 @@ Once the per-depth-bin BRTs are trained:
   - Depth of maximum CHLA
   - Biomass-weighted mean depth
 
-This moves us toward **global, depth-resolved phytoplankton structure from space**.
+This moves us toward **global, depth-resolved CHLA density from space**.
 
 ---
 
