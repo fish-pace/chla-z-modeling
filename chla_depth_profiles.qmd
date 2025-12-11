@@ -9,6 +9,8 @@ format:
     slide-number: true
     transition: fade
     center: false
+    fig-align: center
+    out-width: 80%
 execute:
   echo: false
   warning: false
@@ -110,8 +112,6 @@ plt.tight_layout()
 plt.show()
 ```
 
----
-
 # 📡 Why Rrs Contains Subsurface Information
 
 Even though Rrs is *measured above the surface*:
@@ -122,19 +122,16 @@ Even though Rrs is *measured above the surface*:
 
 PACE’s spectral richness gives us new power to infer **what’s happening at depth**.
 
----
-
 # ⛓️ In-situ Platforms: OOI
 
 - Fixed moorings with fluorometers at discrete depths  
 - High-frequency CHLA, temperature, salinity  
 - Key for shallow structure, seasonal cycles, and diel variability
 
----
-
 # OOI Platforms
 
 ```{python}
+#| fig-align: center
 import pandas as pd
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
@@ -179,8 +176,6 @@ plt.tight_layout()
 plt.show()
 
 ```
-
----
 
 # 🤖 In-situ Platforms: Bio-Argo
 
@@ -268,8 +263,6 @@ ax.set_title("Argo CHLA data Mar 2024 to Dec 2025")
 plt.tight_layout()
 plt.show()
 ```
-
----
 
 # A chlorophyll profile from an BGC-Argo buoy
 
@@ -367,13 +360,10 @@ plt.tight_layout()
 plt.show()
 ```
 
----
-
 # General Idea
 
 Train CHLA(z) on hyperspectral Rrs using Boosted Regression Trees
 
----
 
 # 🧰 Depth Binning (Critical Step)
 
@@ -387,7 +377,6 @@ Raw profiles come at irregular depths → ML models need consistent targets.
 
 👉 This is why we train **one BRT per depth bin** instead of forcing a single parametric profile shape.
 
----
 
 # 🗃️ Matching Step: Match in-situ lat/lon/day to PACE Level 3 daily data
 
@@ -396,7 +385,6 @@ Raw profiles come at irregular depths → ML models need consistent targets.
 * Remove data with that seems to be bio-fouled (sensor issue). Ca 20 rows of data
 * Result: 5540 in-situ CHLA depth profiles. Roughly 450 to 700 for each depth bin.
 
----
 
 # The modeling step
 
@@ -406,13 +394,6 @@ Raw profiles come at irregular depths → ML models need consistent targets.
 * Fit BRT to the training data
 * Evaluate performance using the test data (CHLA depth profiles)
 
----
-
----
-
-# 🌍 Where Are the Training Profiles?
-
----
 
 # 🌳 What is a Boosted Regression Tree (BRT)?
 
@@ -426,7 +407,6 @@ Raw profiles come at irregular depths → ML models need consistent targets.
 
 Perfect for mapping **hyperspectral Rrs → scalar CHLA at a given depth**.
 
----
 
 # 🪜 One BRT Per Depth Bin
 
@@ -444,7 +424,6 @@ Benefits:
 - Avoids imposing a fixed profile shape.
 - Enables simple diagnostics: R², RMSE, bias vs depth.
 
----
 
 # 🧮 Results
 
@@ -464,8 +443,6 @@ X_test = bundle.data["X_test"]
 y_train_all = bundle.data["y_train"]
 y_test_all = bundle.data["y_test"]
 ```
-
----
 
 # Performance
 
@@ -515,15 +492,12 @@ plt.tight_layout()
 plt.show()
 ```
 
----
 
 # Prediction of CHLA 0 to 10m
 
 Using PACE data for hyperspectral Rrs, we can make a prediction of surface CHLA. Note it is not our goal to predict surface CHLA as there are many existing surface CHLA products. We will be predicting CHLA depth profiles 0 to 200m. But let's look at this first.
 
 Let's compare to PACE's surface CHLA product as a first pass check, but note that these are different products trained on different in-situ data.
-
----
 
 ```{python}
 # Get PACE Rrs
@@ -831,11 +805,12 @@ pred_da = make_prediction(R, brt_models[var], feature_cols, solar_const=0, type_
 make_plot(pred_da, chla)
 ```
 
----
-
-## Scatter plot of PACE chlor_a to BRT with type = 1 (ooi) and solar_hour = 0 (midnight)
-
 We do not expect these to be identical as the PACE chlor_a is based on the classic Rrs ratio algorithm while the BRT uses the whole spectrum but most importantly was trained on Argo and OOI florometer measurements. 
+
+
+## Scatter plot
+
+PACE chlor_a to BRT with type = 1 (ooi) and solar_hour = 0 (midnight)
 
 Notice that at high PACE `chlor_a`, the BRT model predicts lower `CHLA_0_10`. We might be able to correct this by using the whole CHLA depth profile (next section). 
 
@@ -877,19 +852,119 @@ plt.tight_layout()
 plt.show()
 ```
 
----
-
 # Global prediction
 
 We can do this for the whole globe.
 
 ![](figures/global_CHLA_0_10_pred.png)
 
----
+# Let's predict CHLA depth profiles
 
-# 📏 Depth-wise Metrics for Each Bin (Code)
+# 👁️ Example CHLA Profiles: Observed vs BRT
 
 ```{python}
+import matplotlib.pyplot as plt
+import numpy as np
+
+rrs_cols = [c for c in dataset.columns if c.startswith("pace_Rrs_") and c[-1].isdigit()]
+
+def predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=["solar_hour"]):
+    """
+    Given a single row (one Argo profile) and the dict of BRT models,
+    return predicted CHLA profile (in linear space) across depth bins.
+    """
+    if not extras == None:
+        X_row = row[rrs_cols + extras].to_frame().T  # shape (1, n_features)
+
+    preds_log10 = []
+    for c in chl_cols:
+        model = brt_models[c]
+        y_log10 = model.predict(X_row)[0]
+        preds_log10.append(y_log10)
+
+    preds_log10 = np.array(preds_log10)
+    preds = 10 ** preds_log10  # back to mg m-3
+    return preds
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Sample 10 random indices from test set
+n_profiles = 10
+# 1. Filter test_idx to those with >= 3 non-NaN CHLA bins
+valid_idx = [
+    i for i in train_idx
+    if dataset.loc[i, chl_cols].count() >= 10
+#    if dataset.loc[i, chl_cols].count() >= 5 and dataset.loc[i, chl_cols].max() >= 1
+#    if dataset.loc[i, chl_cols].count() >= 0 and dataset.loc[i, "CHLA_100_110"].max() >= 1
+#    if dataset.loc[i, "CHLA_100_110"] >= 1
+]
+# 2. Sample from valid_idx with a seed
+rng = np.random.default_rng(120)
+n_to_plot = min(n_profiles, len(valid_idx))  # just in case there are fewer than 10
+sample_idx = rng.choice(valid_idx, size=n_to_plot, replace=False)
+
+ncols = 5
+nrows = int(np.ceil(n_profiles / ncols))
+
+fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 4 * nrows), sharey=True)
+axes = np.atleast_1d(axes).ravel()
+
+for ax, idx in zip(axes, sample_idx):
+    row = dataset.iloc[idx]
+
+    # observed profile (line up with chl_cols order)
+    obs_profile = row[chl_cols].to_numpy()
+
+    # predicted profile
+    pred_profile = predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=extra)
+
+    ax.plot(obs_profile, depth_centers, marker="o", label="Obs", linestyle="-")
+    ax.plot(pred_profile, depth_centers, marker="s", label="BRT", linestyle="--")
+
+    ax.set_xlabel("CHLA (mg m$^{-3}$)")
+    ax.grid(True, alpha=0.3)
+
+    prof_id = row.get("type", idx)
+    if prof_id == 0:
+        prof_id = "Argo"
+    else:
+        prof_id = "OOI"
+    ax.set_title(f"type={prof_id} idx={idx}")
+
+# turn off any unused axes
+for ax in axes[n_profiles:]:
+    ax.axis("off")
+
+# Depth axis settings: 0–200 with a little padding
+min_depth = 0
+max_depth = 200
+pad = 5  # meters
+
+for ax in axes:
+    # limits WITH padding, then invert so 0 is at top
+    ax.set_ylim(min_depth - pad, max_depth + pad)
+    ax.invert_yaxis()
+    ax.set_yticks([0, 50, 100, 150, 200])
+
+axes[0].set_ylabel("Depth (m)")
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="upper right")
+fig.suptitle("Observed vs BRT-predicted CHLA profiles\n(10 random test profiles)", y=0.98)
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+#plt.savefig("figures/pred_vs_obs_profiles.jpg", dpi=70, bbox_inches="tight")
+plt.show()
+```
+
+# 📏 Depth-wise Metrics for Each Bin
+
+* Errors for depth bin prediction
+* Location of peak CHLA
+* Height of peak CHLA
+* Integrated CHLA from 0 to 200m
+
+```{python}
+# Depth-wise Metrics for Each Bin (Code)
 from sklearn.metrics import r2_score, mean_squared_error
 import numpy as np
 
@@ -1095,17 +1170,9 @@ def depth_metrics_table(
     return metrics_df
 ```
 
-```{python}
-metrics_df = depth_metrics_table(
-    brt_models,
-    dataset,
-    test_idx,
-    extras=("solar_hour", "type"),
-)
-metrics_df.head()
-```
-
 ---
+
+# Proportional Errors for Depth Bins
 
 ```{python}
 fig, axes = plt.subplots(1, 3, figsize=(12, 6), sharey=True)
@@ -1212,106 +1279,6 @@ fig.suptitle("BRT Relative (ratio) Performance by Depth Bin", fontsize=15)
 plt.tight_layout(rect=[0, 0, 1, 0.92])
 plt.show()
 ```
-
----
-
-# 👁️ Example CHLA Profiles: Observed vs BRT
-
-```{python}
-import matplotlib.pyplot as plt
-import numpy as np
-
-rrs_cols = [c for c in dataset.columns if c.startswith("pace_Rrs_") and c[-1].isdigit()]
-
-def predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=["solar_hour"]):
-    """
-    Given a single row (one Argo profile) and the dict of BRT models,
-    return predicted CHLA profile (in linear space) across depth bins.
-    """
-    if not extras == None:
-        X_row = row[rrs_cols + extras].to_frame().T  # shape (1, n_features)
-
-    preds_log10 = []
-    for c in chl_cols:
-        model = brt_models[c]
-        y_log10 = model.predict(X_row)[0]
-        preds_log10.append(y_log10)
-
-    preds_log10 = np.array(preds_log10)
-    preds = 10 ** preds_log10  # back to mg m-3
-    return preds
-
-import matplotlib.pyplot as plt
-import numpy as np
-
-# Sample 10 random indices from test set
-n_profiles = 10
-# 1. Filter test_idx to those with >= 3 non-NaN CHLA bins
-valid_idx = [
-    i for i in train_idx
-    if dataset.loc[i, chl_cols].count() >= 10
-#    if dataset.loc[i, chl_cols].count() >= 5 and dataset.loc[i, chl_cols].max() >= 1
-#    if dataset.loc[i, chl_cols].count() >= 0 and dataset.loc[i, "CHLA_100_110"].max() >= 1
-#    if dataset.loc[i, "CHLA_100_110"] >= 1
-]
-# 2. Sample from valid_idx with a seed
-rng = np.random.default_rng(120)
-n_to_plot = min(n_profiles, len(valid_idx))  # just in case there are fewer than 10
-sample_idx = rng.choice(valid_idx, size=n_to_plot, replace=False)
-
-ncols = 5
-nrows = int(np.ceil(n_profiles / ncols))
-
-fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 4 * nrows), sharey=True)
-axes = np.atleast_1d(axes).ravel()
-
-for ax, idx in zip(axes, sample_idx):
-    row = dataset.iloc[idx]
-
-    # observed profile (line up with chl_cols order)
-    obs_profile = row[chl_cols].to_numpy()
-
-    # predicted profile
-    pred_profile = predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=extra)
-
-    ax.plot(obs_profile, depth_centers, marker="o", label="Obs", linestyle="-")
-    ax.plot(pred_profile, depth_centers, marker="s", label="BRT", linestyle="--")
-
-    ax.set_xlabel("CHLA (mg m$^{-3}$)")
-    ax.grid(True, alpha=0.3)
-
-    prof_id = row.get("type", idx)
-    if prof_id == 0:
-        prof_id = "Argo"
-    else:
-        prof_id = "OOI"
-    ax.set_title(f"type={prof_id} idx={idx}")
-
-# turn off any unused axes
-for ax in axes[n_profiles:]:
-    ax.axis("off")
-
-# Depth axis settings: 0–200 with a little padding
-min_depth = 0
-max_depth = 200
-pad = 5  # meters
-
-for ax in axes:
-    # limits WITH padding, then invert so 0 is at top
-    ax.set_ylim(min_depth - pad, max_depth + pad)
-    ax.invert_yaxis()
-    ax.set_yticks([0, 50, 100, 150, 200])
-
-axes[0].set_ylabel("Depth (m)")
-handles, labels = axes[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="upper right")
-fig.suptitle("Observed vs BRT-predicted CHLA profiles\n(10 random test profiles)", y=0.98)
-plt.tight_layout(rect=[0, 0, 1, 0.95])
-#plt.savefig("figures/pred_vs_obs_profiles.jpg", dpi=70, bbox_inches="tight")
-plt.show()
-```
-
----
 
 # 📡 Peak Depth and Integrated CHLA Metrics (Code)
 
@@ -1447,7 +1414,7 @@ peak_df[
 ].head()
 ```
 
----
+# 📉 Peak Depth and Height
 
 # 📉 Integrated CHLA (0–200 m): Obs vs Pred
 
