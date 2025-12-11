@@ -4,15 +4,13 @@ author: Eli Holmes
 format:
   revealjs:
     theme:
-#      - default
-#      - solarized
       - simple
     slide-number: true
     transition: fade
     center: false
     fig-align: center
     out-width: 80%
-    css: slides.css   
+    css: slides.css
 execute:
   echo: false
   warning: false
@@ -336,9 +334,7 @@ ax.scatter(
 ax.set_title("OOI CHLA data Mar 2024 to Dec 2025")
 plt.tight_layout()
 plt.show()
-
 ```
-
 
 # 🧰 Depth Binning in-situ Data (Critical Step)
 
@@ -418,6 +414,7 @@ X_test = bundle.data["X_test"]
 y_train_all = bundle.data["y_train"]
 y_test_all = bundle.data["y_test"]
 ```
+
 ```{python}
 # Depth-wise Metrics for Each Bin (Code)
 from sklearn.metrics import r2_score, mean_squared_error
@@ -686,7 +683,6 @@ plt.title(f"Prediction vs Truth\nR² = {r2:.3f}, RMSE = {rmse:.3f}")
 plt.tight_layout()
 plt.show()
 ```
-
 
 # Prediction of CHLA 0 to 10m
 

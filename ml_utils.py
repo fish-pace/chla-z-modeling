@@ -770,10 +770,455 @@ def make_prediction_brt(
         name="y_pred",
     )
 
+def predict_all_depths_for_day(
+    R,                     # xr.DataArray (lat, lon, wavelength)
+    brt_models: dict,      # e.g. {"CHLA_0_10": model0, "CHLA_10_20": model1, ...}
+    feature_cols: list,
+    consts=None,           # e.g. {"solar_hour": 0, "type": 1}
+    chunk_size_lat: int = 100,
+    time=None,             # e.g. "2024-07-15" or np.datetime64
+    z=None,                # optional override for depth centers
+    z_name: str = "z",     # vertical dimension name
+    silent: bool = False,  # kept for compatibility; not used right now
+):
+    """
+    Run BRT predictions for all depth bins for a single day.
+
+    Memory-optimized version:
+      - predictions stored as float32
+      - preallocates (depth, lat, lon) and fills in lat-chunks
+
+    Parameters
+    ----------
+    R : xr.DataArray
+        Rrs on (lat, lon, wavelength). No time dimension.
+    brt_models : dict
+        Mapping depth-label -> fitted model, e.g.
+        {"CHLA_0_10": model0, "CHLA_10_20": model1, ...}.
+        The last two underscore-separated tokens are assumed to be
+        depth start/end in meters, e.g. "CHLA_0_10" -> 0, 10.
+    feature_cols : list of str
+        Columns expected by the BRT models. The non-constant subset of these
+        must align with the wavelength dimension of R.
+    consts : dict, optional
+        Feature -> scalar value for constant features
+        (e.g. {"solar_hour": 0, "type": 1}).
+    chunk_size_lat : int
+        Number of latitude indices per chunk.
+    time : str or np.datetime64, optional
+        If provided, a `time` dimension of length 1 is added to the output.
+    z : array-like, optional
+        Depth centers (same order as brt_models keys). If not given, centers are
+        inferred as (z_start + z_end)/2 from the model name.
+    z_name : str, default "z"
+        Name of the vertical dimension in the output.
+    silent : bool, default False
+        Placeholder flag for compatibility; currently not used.
+
+    Returns
+    -------
+    xr.DataArray
+        CHLA prediction with dims:
+            (time, z_name, lat, lon)      if `time` provided
+            (z_name, lat, lon)           otherwise
+
+        Coordinates:
+            z_name             : depth center (m)
+            f"{z_name}_start"  : depth bin lower bound (m)
+            f"{z_name}_end"    : depth bin upper bound (m)
+    """
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
+
+    consts = consts or {}
+
+    # Make sure dims are in the expected order
+    R = R.transpose("lat", "lon", "wavelength")
+
+    depth_labels = list(brt_models.keys())
+    n_depth = len(depth_labels)
+
+    # ---- parse z_start / z_end / z_center from labels like ABC_0_10 ----
+    z_start_arr = np.full(n_depth, np.nan, dtype="float32")
+    z_end_arr   = np.full(n_depth, np.nan, dtype="float32")
+    z_center_arr = np.full(n_depth, np.nan, dtype="float32")
+
+    for i, label in enumerate(depth_labels):
+        parts = label.split("_")
+        if len(parts) >= 3:
+            try:
+                z0 = float(parts[-2])
+                z1 = float(parts[-1])
+                z_start_arr[i] = z0
+                z_end_arr[i]   = z1
+                z_center_arr[i] = 0.5 * (z0 + z1)
+            except ValueError:
+                # leave as NaN if parsing fails
+                pass
+
+    # override z centers if explicitly provided
+    if z is not None:
+        z_center_arr = np.asarray(z, dtype="float32")
+        if z_center_arr.shape[0] != n_depth:
+            raise ValueError(f"len(z)={len(z_center_arr)} does not match number of models={n_depth}")
+
+    nlat = R.sizes["lat"]
+    nlon = R.sizes["lon"]
+    lat_coord = R["lat"]
+    lon_coord = R["lon"]
+
+    # ------- non-constant features must match wavelength axis -------
+    non_constant_cols = [c for c in feature_cols if c not in consts]
+    nwave = R.sizes["wavelength"]
+
+    if len(non_constant_cols) != nwave:
+        raise ValueError(
+            f"Number of non-constant features ({len(non_constant_cols)}) "
+            f"does not match wavelength dimension ({nwave}).\n"
+            f"Non-constant cols: {non_constant_cols}"
+        )
+
+    # Check that wavelengths encoded in feature_cols match R["wavelength"]
+    try:
+        wl_from_cols = np.array(
+            [float(col.rsplit("_", 1)[-1]) for col in non_constant_cols],
+            dtype=float,
+        )
+    except ValueError as e:
+        raise ValueError(
+            "Could not parse wavelengths from feature_cols. "
+            "Expected names like 'pace_Rrs_346', 'pace_Rrs_348', etc. "
+            f"Got non-constant_cols={non_constant_cols[:5]}..."
+        ) from e
+
+    wl_R = np.asarray(R["wavelength"].values, dtype=float)
+
+    if wl_from_cols.shape[0] != wl_R.shape[0] or not np.allclose(wl_from_cols, wl_R, atol=0.01):
+        raise ValueError(
+            "Mismatch between wavelengths implied by feature_cols and the "
+            "R['wavelength'] coordinate.\n"
+            f"First few from feature_cols: {wl_from_cols[:5]}\n"
+            f"First few from R.wavelength: {wl_R[:5]}"
+        )
+
+    # -------- preallocate output array: (depth, lat, lon) as float32 --------
+    pred_all_arr = np.full(
+        (n_depth, nlat, nlon),
+        np.nan,
+        dtype=np.float32,
+    )
+
+    # ---- chunk over latitude to avoid loading full globe into memory ----
+    for start in range(0, nlat, chunk_size_lat):
+        if not silent:
+            print(f"Starting {start} of {nlat}")
+
+        stop = min(start + chunk_size_lat, nlat)
+        R_chunk = R.isel(lat=slice(start, stop))  # (lat_chunk, lon, wavelength)
+
+        # 1. stack lat/lon → pixel
+        R2 = R_chunk.stack(pixel=("lat", "lon")).transpose("pixel", "wavelength")
+        R2_vals = R2.values  # (n_pixel, n_wavelength)
+
+        # 2. base DataFrame for all models (non-constant features)
+        df_base = pd.DataFrame(R2_vals, columns=non_constant_cols)
+
+        # 3. For each depth-model, add constants, filter NaNs, predict, reshape
+        for d_idx, depth_label in enumerate(depth_labels):
+            model = brt_models[depth_label]
+
+            # Start from the base spectral predictors
+            df_pred = df_base.copy()
+
+            # Add constant columns that are actually in feature_cols
+            for name, value in consts.items():
+                if name in feature_cols:
+                    df_pred[name] = value
+
+            # Ensure columns are in the correct order expected by the model
+            df_pred = df_pred[feature_cols]
+
+            # Handle NaNs: keep only pixels with complete predictors
+            valid_mask = ~df_pred.isna().any(axis=1)
+            df_valid = df_pred[valid_mask]
+
+            # Prepare flat prediction array for this lat-chunk (float32)
+            y_pred_flat = np.full(df_pred.shape[0], np.nan, dtype=np.float32)
+
+            if len(df_valid) > 0:
+                # model.predict may return float64; cast to float32
+                y_pred_flat[valid_mask.values] = model.predict(df_valid).astype(np.float32)
+
+            # Reshape back to (lat_chunk, lon)
+            nlat_chunk = R_chunk.sizes["lat"]
+            y_pred_map = y_pred_flat.reshape(nlat_chunk, nlon)
+
+            # Fill into the preallocated array
+            pred_all_arr[d_idx, start:stop, :] = y_pred_map
+
+    if not silent:
+        print(f"Starting wrapping")
+
+    # ---- wrap preallocated array into an xarray.DataArray ----
+    pred_all = xr.DataArray(
+        pred_all_arr,
+        coords={
+            z_name: z_center_arr,
+            "lat": lat_coord,
+            "lon": lon_coord,
+        },
+        dims=(z_name, "lat", "lon"),
+        name="CHLA",
+    )
+
+    # vertical coordinates
+    if not silent:
+        print(f"Adding coords")
+    pred_all = pred_all.assign_coords(
+        {
+            z_name: z_center_arr,
+            f"{z_name}_start": (z_name, z_start_arr),
+            f"{z_name}_end":   (z_name, z_end_arr),
+        }
+    )
+
+    # optional time dimension
+    if time is not None:
+        if not silent:
+            print(f"Adding time")
+        time_val = np.datetime64(time)
+        pred_all = pred_all.expand_dims(time=[time_val])
+
+    pred_all.attrs.setdefault(
+        "depth_info",
+        f"Depth coordinates inferred from brt_models keys of form 'NAME_z0_z1'. "
+        f"{z_name} is the bin center; {z_name}_start/{z_name}_end are bin bounds (m)."
+    )
+
+    return pred_all
+
+def OLD2_predict_all_depths_for_day(
+    R: xr.DataArray,         # (lat, lon, wavelength)
+    brt_models: dict,        # e.g. {"CHLA_0_10": model0, "CHLA_10_20": model1, ...}
+    feature_cols: list,
+    consts=None,             # e.g. {"solar_hour": 0, "type": 1}
+    chunk_size_lat: int = 100,
+    time=None,               # e.g. "2024-07-15" or np.datetime64
+    z: np.ndarray | None = None,   # optional override for depth centers
+    z_name: str = "z",       # vertical dimension name
+    silent=True # don't print progress
+):
+    """
+    Run BRT predictions for all depth bins for a single day, using the same
+    logic as `make_prediction()` but looping over multiple depth-specific models.
+
+    Parameters
+    ----------
+    R : xr.DataArray
+        Rrs on (lat, lon, wavelength). No time dimension.
+    brt_models : dict
+        Mapping depth-label -> fitted model, e.g.
+        {"CHLA_0_10": model0, "CHLA_10_20": model1, ...}.
+        The last two underscore-separated tokens are assumed to be
+        depth start/end in meters, e.g. "CHLA_0_10" -> 0, 10.
+    feature_cols : list of str
+        Columns expected by the BRT models. The non-constant subset of these
+        must align with the wavelength dimension of R.
+    consts : dict, optional
+        Feature -> scalar value for constant features
+        (e.g. {"solar_hour": 0, "type": 1}).
+    chunk_size_lat : int
+        Number of latitude indices per chunk.
+    time : str or np.datetime64, optional
+        If provided, a `time` dimension of length 1 is added to the output.
+    z : array-like, optional
+        Depth centers (same order as brt_models keys). If not given, centers are
+        inferred as (z_start + z_end)/2 from the model name.
+    z_name : str, default "z"
+        Name of the vertical dimension in the output.
+
+    Returns
+    -------
+    xr.DataArray
+        CHLA prediction with dims:
+            (time, z_name, lat, lon)      if `time` provided
+            (z_name, lat, lon)           otherwise
+
+        Coordinates:
+            z_name             : depth center (m)
+            f"{z_name}_start"  : depth bin lower bound (m)
+            f"{z_name}_end"    : depth bin upper bound (m)
+    """
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
+
+    consts = consts or {}
+
+    # Make sure dims are in the expected order
+    R = R.transpose("lat", "lon", "wavelength")
+
+    depth_labels = list(brt_models.keys())
+    n_depth = len(depth_labels)
+
+    # ---- parse z_start / z_end / z_center from labels like ABC_0_10 ----
+    z_start_arr = np.full(n_depth, np.nan, dtype="float32")
+    z_end_arr   = np.full(n_depth, np.nan, dtype="float32")
+    z_center_arr = np.full(n_depth, np.nan, dtype="float32")
+
+    for i, label in enumerate(depth_labels):
+        parts = label.split("_")
+        if len(parts) >= 3:
+            try:
+                z0 = float(parts[-2])
+                z1 = float(parts[-1])
+                z_start_arr[i] = z0
+                z_end_arr[i]   = z1
+                z_center_arr[i] = 0.5 * (z0 + z1)
+            except ValueError:
+                # leave as NaN if parsing fails
+                pass
+
+    # override z centers if explicitly provided
+    if z is not None:
+        z_center_arr = np.asarray(z, dtype="float32")
+        if z_center_arr.shape[0] != n_depth:
+            raise ValueError(f"len(z)={len(z_center_arr)} does not match number of models={n_depth}")
+
+    nlat = R.sizes["lat"]
+    nlon = R.sizes["lon"]
+    lat_coord = R["lat"]
+    lon_coord = R["lon"]
+
+    # ------- non-constant features must match wavelength axis -------
+    non_constant_cols = [c for c in feature_cols if c not in consts]
+    nwave = R.sizes["wavelength"]
+
+    if len(non_constant_cols) != nwave:
+        raise ValueError(
+            f"Number of non-constant features ({len(non_constant_cols)}) "
+            f"does not match wavelength dimension ({nwave}).\n"
+            f"Non-constant cols: {non_constant_cols}"
+        )
+
+    # New: check that the wavelengths encoded in feature_cols match R["wavelength"]
+    # Assumes feature names end in the wavelength, e.g. "pace_Rrs_346"
+    try:
+        wl_from_cols = np.array(
+            [float(col.rsplit("_", 1)[-1]) for col in non_constant_cols],
+            dtype=float,
+        )
+    except ValueError as e:
+        raise ValueError(
+            "Could not parse wavelengths from feature_cols. "
+            "Expected names like 'pace_Rrs_346', 'pace_Rrs_348', etc. "
+            f"Got non-constant_cols={non_constant_cols[:5]}..."
+        ) from e
+
+    wl_R = np.asarray(R["wavelength"].values, dtype=float)
+
+    if wl_from_cols.shape[0] != wl_R.shape[0] or not np.allclose(wl_from_cols, wl_R, atol=0.01):
+        raise ValueError(
+            "Mismatch between wavelengths implied by feature_cols and the "
+            "R['wavelength'] coordinate.\n"
+            f"First few from feature_cols: {wl_from_cols[:5]}\n"
+            f"First few from R.wavelength: {wl_R[:5]}"
+        )
+
+    # collect chunks over depth
+    depth_chunks = {label: [] for label in depth_labels}
+
+    # ---- chunk over latitude to avoid loading full globe into memory ----
+    for start in range(0, nlat, chunk_size_lat):
+        if not silent:
+            print(f"Starting {start} of {nlat}")
+        stop = min(start + chunk_size_lat, nlat)
+        R_chunk = R.isel(lat=slice(start, stop))  # (lat_chunk, lon, wavelength)
+
+        # 1. stack lat/lon → pixel
+        R2 = R_chunk.stack(pixel=("lat", "lon")).transpose("pixel", "wavelength")
+        R2_vals = R2.values  # (n_pixel, n_wavelength)
+
+        # 2. base DataFrame for all models (non-constant features)
+        df_base = pd.DataFrame(R2_vals, columns=non_constant_cols)
+
+        # 3. For each depth-model, add constants, filter NaNs, predict, reshape
+        for depth_label, model in brt_models.items():
+            # Start from the base spectral predictors
+            df_pred = df_base.copy()
+
+            # Add constant columns that are actually in feature_cols
+            for name, value in consts.items():
+                if name in feature_cols:
+                    df_pred[name] = value
+
+            # Ensure columns are in the correct order expected by the model
+            df_pred = df_pred[feature_cols]
+
+            # Handle NaNs: keep only pixels with complete predictors
+            valid_mask = ~df_pred.isna().any(axis=1)
+            df_valid = df_pred[valid_mask]
+
+            # Prepare flat prediction array for this lat-chunk
+            y_pred_flat = np.full(df_pred.shape[0], np.nan, dtype=float)
+
+            if len(df_valid) > 0:
+                y_pred_flat[valid_mask.values] = model.predict(df_valid)
+
+            # Reshape back to (lat_chunk, lon)
+            nlat_chunk = R_chunk.sizes["lat"]
+            y_pred_map = y_pred_flat.reshape(nlat_chunk, nlon)
+
+            da_chunk = xr.DataArray(
+                y_pred_map,
+                coords={"lat": R_chunk["lat"], "lon": lon_coord},
+                dims=("lat", "lon"),
+                name="CHLA",
+            )
+            depth_chunks[depth_label].append(da_chunk)
+
+    # ---- stitch each depth over lat, then stack into vertical dimension ----
+    if not silent:
+        print("Stitching together")
+    per_depth = []
+    for idx, depth_label in enumerate(depth_labels):
+        chunks = depth_chunks[depth_label]
+        da = xr.concat(chunks, dim="lat").assign_coords(lat=lat_coord)
+        per_depth.append(da.expand_dims({z_name: [idx]}))
+
+    if not silent:
+        print("Concatinating together")
+    pred_all = xr.concat(per_depth, dim=z_name)  # (z, lat, lon)
+    pred_all.name = "CHLA"
+
+    # vertical coordinates
+    if not silent:
+        print("Add coords")
+    pred_all = pred_all.assign_coords(
+        {
+            z_name: z_center_arr,
+            f"{z_name}_start": (z_name, z_start_arr),
+            f"{z_name}_end":   (z_name, z_end_arr),
+        }
+    )
+
+    # optional time dimension
+    if time is not None:
+        time_val = np.datetime64(time)
+        pred_all = pred_all.expand_dims(time=[time_val])
+
+    pred_all.attrs.setdefault(
+        "depth_info",
+        f"Depth coordinates inferred from brt_models keys of form 'NAME_z0_z1'. "
+        f"{z_name} is the bin center; {z_name}_start/{z_name}_end are bin bounds (m)."
+    )
+
+    return pred_all
 
 
 # Combine all BRTs for each depth and make a xr.Dataset of predictions
-def predict_all_depths_for_day(
+def OLD_predict_all_depths_for_day(
     R: xr.DataArray,         # (lat, lon, wavelength)
     brt_models: dict,        # e.g. {"CHLA_0_10": model0, "CHLA_10_20": model1, ...}
     feature_cols: list,
