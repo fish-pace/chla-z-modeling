@@ -62,8 +62,6 @@ from sklearn.metrics import r2_score, mean_squared_error
 from scipy.ndimage import uniform_filter1d
 ```
 
----
-
 # 🌊 Why Do Depth Profiles Matter (Fisheries)?
 
 - Many fish species interact with **subsurface productivity layers**, not just the surface.
@@ -75,8 +73,6 @@ from scipy.ndimage import uniform_filter1d
 
 **Depth ≠ just a detail — it's the environment fish actually occupy.**
 
----
-
 # 🌫️ Why CHLA Profiles Matter (Carbon Cycling)
 
 - Phytoplankton depth distribution controls:
@@ -87,8 +83,6 @@ from scipy.ndimage import uniform_filter1d
 
 **Accurate vertical biomass is essential for carbon-cycle models.**
 
----
-
 # 🌈 Why PACE Changes the Game
 
 - PACE’s hyperspectral **Rrs(λ)** captures more spectral detail than prior missions.
@@ -97,8 +91,6 @@ from scipy.ndimage import uniform_filter1d
   - Respond to pigment composition
   - Vary with particle concentration and size
 - With hyperspectral data, we can infer **signals tied to subsurface structure**, not just surface color.
-
----
 
 # 📈 What Does Hyperspectral Rrs Look Like?
 

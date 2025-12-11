@@ -141,7 +141,6 @@ Eli Holmes
 </div>
 
 </section>
-<section>
 <section id="why-global-chla-depth-profiles" class="title-slide slide level1 center">
 <h1>🌍 Why Global CHLA Depth Profiles?</h1>
 <ul>
@@ -156,10 +155,7 @@ Eli Holmes
 <strong>We have no global product providing full CHLA-depth profiles daily.</strong></li>
 </ul>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="why-do-depth-profiles-matter-fisheries" class="title-slide slide level1 center">
 <h1>🌊 Why Do Depth Profiles Matter (Fisheries)?</h1>
 <ul>
@@ -174,10 +170,7 @@ Eli Holmes
 </ul>
 <p><strong>Depth ≠ just a detail — it’s the environment fish actually occupy.</strong></p>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="why-chla-profiles-matter-carbon-cycling" class="title-slide slide level1 center">
 <h1>🌫️ Why CHLA Profiles Matter (Carbon Cycling)</h1>
 <ul>
@@ -191,10 +184,7 @@ Eli Holmes
 </ul>
 <p><strong>Accurate vertical biomass is essential for carbon-cycle models.</strong></p>
 </section>
-<section class="slide level2">
 
-</section></section>
-<section>
 <section id="why-pace-changes-the-game" class="title-slide slide level1 center">
 <h1>🌈 Why PACE Changes the Game</h1>
 <ul>
@@ -208,13 +198,11 @@ Eli Holmes
 <li>With hyperspectral data, we can infer <strong>signals tied to subsurface structure</strong>, not just surface color.</li>
 </ul>
 </section>
-<section class="slide level2">
 
-</section></section>
 <section>
 <section id="what-does-hyperspectral-rrs-look-like" class="title-slide slide level1 center">
 <h1>📈 What Does Hyperspectral Rrs Look Like?</h1>
-<div id="4c3b3e34" class="cell" data-execution_count="2">
+<div id="4c3b3e34" class="cell" data-execution_count="3">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -258,7 +246,7 @@ Eli Holmes
 <section>
 <section id="ooi-platforms" class="title-slide slide level1 center">
 <h1>OOI Platforms</h1>
-<div id="a479fc35" class="cell" data-execution_count="3">
+<div id="a479fc35" class="cell" data-execution_count="4">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -281,7 +269,7 @@ Eli Holmes
 </li>
 <li>Provides chlorophyll profiles around the globe</li>
 </ul>
-<div id="cc1d108a" class="cell" data-execution_count="4">
+<div id="cc1d108a" class="cell" data-execution_count="5">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -290,7 +278,7 @@ Eli Holmes
 </div>
 </div>
 </div>
-<div id="4c2b7936" class="cell" data-execution_count="5">
+<div id="4c2b7936" class="cell" data-execution_count="6">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -306,7 +294,7 @@ Eli Holmes
 <section>
 <section id="a-chlorophyll-profile-from-an-bgc-argo-buoy" class="title-slide slide level1 center">
 <h1>A chlorophyll profile from an BGC-Argo buoy</h1>
-<div id="48675910" class="cell" data-execution_count="7">
+<div id="48675910" class="cell" data-execution_count="8">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -433,7 +421,7 @@ Eli Holmes
 <section>
 <section id="results" class="title-slide slide level1 center">
 <h1>🧮 Results</h1>
-<div id="696775d4" class="cell" data-execution_count="8">
+<div id="696775d4" class="cell" data-execution_count="9">
 <div class="cell-output cell-output-stdout">
 <pre><code>
 Loaded ML bundle from: models/brt_chla_profiles_bundle.zip
@@ -469,7 +457,7 @@ Usage example (Python):
 <section id="performance" class="title-slide slide level1 center">
 <h1>Performance</h1>
 <p>Overall we see a close match between our preditions and our test data for CHLA in the upper 10m.</p>
-<div id="de8c345c" class="cell" data-execution_count="10">
+<div id="de8c345c" class="cell" data-execution_count="11">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -490,7 +478,7 @@ Usage example (Python):
 </section>
 <section class="slide level2">
 
-<div id="c7e35bb1" class="cell" data-execution_count="14">
+<div id="c7e35bb1" class="cell" data-execution_count="15">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -504,7 +492,7 @@ Usage example (Python):
 <h2>Scatter plot of PACE chlor_a to BRT with type = 1 (ooi) and solar_hour = 0 (midnight)</h2>
 <p>We do not expect these to be identical as the PACE chlor_a is based on the classic Rrs ratio algorithm while the BRT uses the whole spectrum but most importantly was trained on Argo and OOI florometer measurements.</p>
 <p>Notice that at high PACE <code>chlor_a</code>, the BRT model predicts lower <code>CHLA_0_10</code>. We might be able to correct this by using the whole CHLA depth profile (next section).</p>
-<div id="35a4e2ff" class="cell" data-execution_count="15">
+<div id="35a4e2ff" class="cell" data-execution_count="16">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -529,7 +517,7 @@ Usage example (Python):
 <section>
 <section id="depth-wise-metrics-for-each-bin-code" class="title-slide slide level1 center">
 <h1>📏 Depth-wise Metrics for Each Bin (Code)</h1>
-<div id="935b8ab3" class="cell" data-execution_count="17">
+<div id="935b8ab3" class="cell" data-execution_count="18">
 <div class="cell-output cell-output-display" data-execution_count="68">
 <div>
 <style scoped="">
@@ -661,7 +649,7 @@ Usage example (Python):
 </section>
 <section class="slide level2">
 
-<div id="7738a979" class="cell" data-execution_count="18">
+<div id="7738a979" class="cell" data-execution_count="19">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -677,7 +665,7 @@ Usage example (Python):
 <section>
 <section id="example-chla-profiles-observed-vs-brt" class="title-slide slide level1 center">
 <h1>👁️ Example CHLA Profiles: Observed vs BRT</h1>
-<div id="8ac4be0e" class="cell" data-execution_count="19">
+<div id="8ac4be0e" class="cell" data-execution_count="20">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
@@ -693,7 +681,7 @@ Usage example (Python):
 <section>
 <section id="peak-depth-and-integrated-chla-metrics-code" class="title-slide slide level1 center">
 <h1>📡 Peak Depth and Integrated CHLA Metrics (Code)</h1>
-<div id="c69a624f" class="cell" data-execution_count="20">
+<div id="c69a624f" class="cell" data-execution_count="21">
 <div class="cell-output cell-output-display" data-execution_count="71">
 <div>
 <style scoped="">
@@ -799,7 +787,7 @@ Usage example (Python):
 <section>
 <section id="integrated-chla-0200-m-obs-vs-pred" class="title-slide slide level1 center">
 <h1>📉 Integrated CHLA (0–200 m): Obs vs Pred</h1>
-<div id="c5af303c" class="cell" data-execution_count="21">
+<div id="c5af303c" class="cell" data-execution_count="22">
 <div class="cell-output cell-output-display">
 <div>
 <figure>
