@@ -112,13 +112,12 @@ Even though Rrs is *measured above the surface*:
 
 PACE’s spectral richness gives us new power to infer **what’s happening at depth**.
 
-# Nice idea. Yeah. Right.
-
 # Results spoiler. It does seem to work...
 
-Caveat: Mostly trained on data from open ocean (BGC-Argo). Most data was for surface CHLA < 1. Need more coastal data. Though it does do a good job for the coastal data and surface CHLA > 10 data that we do have.
-
+Caveat: Mostly trained on data from open ocean (BGC-Argo). Most data was for surface CHLA < 1. Need more coastal data. Though it does do a decent job for the coastal data and surface CHLA > 10 data that we do have.
+<center>
 ![](figures/pred_vs_obs_profiles.jpg)
+</center>
 
 # General Idea
 
@@ -133,9 +132,9 @@ Caveat: Mostly trained on data from open ocean (BGC-Argo). Most data was for sur
 
 # In-situ Platforms: BGC-Argo
 
-- Profiling floats: 0–1000+ m  
-- Continuous vertical CHLA profiles  
-- Provides chlorophyll profiles around the globe
+- Continuous vertical CHLA profiles
+- Global
+- **Deep Water** (>1000m) not coastal
 
 ```{python}
 #| fig-align: center
@@ -184,7 +183,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-# A chlorophyll profile from an BGC-Argo buoy
+# A Chlorophyll Profile from an BGC-Argo Buoy
 
 ```{python}
 #| fig-align: center
@@ -281,11 +280,8 @@ plt.tight_layout()
 plt.show()
 ```
 
-# Ocean Observing Initiative
 
-![](figures/ooi.jpg)
-
-# In-situ Platforms: OOI
+# Ocean Observing Initiative (OOI)
 
 - Fixed moorings with fluorometers at discrete depths  
 - High-frequency CHLA, temperature, salinity  
@@ -336,6 +332,10 @@ ax.set_title("OOI CHLA data Mar 2024 to Dec 2025")
 plt.tight_layout()
 plt.show()
 ```
+
+# OOI Provides Coastal and Shelf Data
+
+![](figures/ooi.jpg)
 
 # Preparing Data for Training
 
@@ -1160,7 +1160,7 @@ plt.show()
 
 ```{python}
 #| fig-align: center
-#| out-height: 70%
+#| out-height: 60%
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1257,11 +1257,11 @@ plt.show()
 
 # Does it work in coastal waters?
 
-Not enough data. No correction was done for bathymetry (scattering off bottom), so probably not. Need coastal data.
+Not enough data yet. No correction was done for bathymetry (scattering off bottom), so that will need to be fixed for shallow water. 
 
 ```{python}
 #| fig-align: center
-#| out-height: 70%
+#| out-height: 60%
 
 import matplotlib.pyplot as plt
 import numpy as np
