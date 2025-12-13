@@ -227,8 +227,9 @@ Eli Holmes
 
 </section>
 
-<section id="results-spoiler.-yes-it-does-work." class="title-slide slide level1 center">
-<h1>Results spoiler. Yes it does work.</h1>
+<section id="results-spoiler.-it-does-seem-to-work" class="title-slide slide level1 center">
+<h1>Results spoiler. It does seem to work…</h1>
+<p>Caveat: Mostly trained on data from open ocean (BGC-Argo). Most data was for surface CHLA &lt; 1. Need more coastal data. Though it does do a good job for the coastal data and surface CHLA &gt; 10 data that we do have.</p>
 
 <img data-src="figures/pred_vs_obs_profiles.jpg" class="r-stretch"></section>
 
@@ -256,7 +257,7 @@ Eli Holmes
 </li>
 <li>Provides chlorophyll profiles around the globe</li>
 </ul>
-<div id="573d6a8a" class="cell" data-execution_count="2">
+<div id="b3bea2e9" class="cell" data-execution_count="2">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
@@ -269,7 +270,7 @@ Eli Holmes
 
 <section id="a-chlorophyll-profile-from-an-bgc-argo-buoy" class="title-slide slide level1 center">
 <h1>A chlorophyll profile from an BGC-Argo buoy</h1>
-<div id="aacbdd99" class="cell" data-execution_count="3">
+<div id="6165bf11" class="cell" data-execution_count="3">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
@@ -294,7 +295,7 @@ Eli Holmes
 </li>
 <li>Key for shallow structure, seasonal cycles, and diel variability</li>
 </ul>
-<div id="f4d7591c" class="cell" data-execution_count="4">
+<div id="fd0f4977" class="cell" data-execution_count="4">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
@@ -392,7 +393,7 @@ Eli Holmes
 
 <section id="results" class="title-slide slide level1 center">
 <h1>Results</h1>
-<div id="4a307a4c" class="cell" data-execution_count="5">
+<div id="33d740c3" class="cell" data-execution_count="5">
 <div class="cell-output cell-output-stdout">
 <pre><code>
 Loaded ML bundle from: models/brt_chla_profiles_bundle.zip
@@ -424,8 +425,8 @@ Usage example (Python):
 
 <section id="performance" class="title-slide slide level1 center">
 <h1>Performance</h1>
-<p>Overall we see a close match between our predictions and our test data for CHLA in the upper 10m.</p>
-<div id="f58cd4b1" class="cell" data-execution_count="9">
+<p>Overall we see a close match between our predictions and our test data for CHLA in the upper 10m — for non-coastal data.</p>
+<div id="409cc730" class="cell" data-execution_count="9">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
@@ -440,7 +441,7 @@ Usage example (Python):
 <section id="prediction-of-chla-0-to-10m" class="title-slide slide level1 center">
 <h1>Prediction of CHLA 0 to 10m</h1>
 <p>Using PACE data for hyperspectral Rrs, we can make a prediction of surface CHLA. Let’s compare to PACE’s surface CHLA product as a first pass check, but note that these are different products trained on different in-situ data. Note surface CHLA is not our goal.</p>
-<div id="4b444e5d" class="cell" data-execution_count="13">
+<div id="b5cd20f4" class="cell" data-execution_count="13">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
@@ -455,7 +456,7 @@ Usage example (Python):
 <h2>Scatter plot</h2>
 <p>PACE chlor_a to BRT with type = 1 (ooi) and solar_hour = 0 (midnight)</p>
 <p>Notice that at high PACE <code>chlor_a</code>, the BRT model predicts lower <code>CHLA_0_10</code>. We might be able to correct this by using the whole CHLA depth profile (next section).</p>
-<div id="ca17955c" class="cell" data-execution_count="14">
+<div id="f94a7273" class="cell" data-execution_count="14">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
@@ -478,11 +479,38 @@ Usage example (Python):
 
 <section id="chla-profiles-observed-vs-brt" class="title-slide slide level1 center">
 <h1>CHLA Profiles: Observed vs BRT</h1>
-<div id="aef243a6" class="cell" data-execution_count="15">
+<div id="0967b508" class="cell" data-execution_count="15">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
 <p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-16-output-1.png" class="quarto-figure quarto-figure-center" width="1439" height="763"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
+
+<section id="does-it-work-when-surface-chla-is-high" class="title-slide slide level1 center">
+<h1>Does it work when surface CHLA is high?</h1>
+<div id="18895612" class="cell" data-execution_count="16">
+<div class="cell-output cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-17-output-1.png" class="quarto-figure quarto-figure-center" width="1437" height="763"></p>
+</figure>
+</div>
+</div>
+</div>
+</section>
+
+<section id="does-it-work-in-coastal-waters" class="title-slide slide level1 center">
+<h1>Does it work in coastal waters?</h1>
+<p>Not enough data. No correction was done for bathymetry (scattering off bottom), so probably not. Need coastal data.</p>
+<div id="6be2d51b" class="cell" data-execution_count="17">
+<div class="cell-output cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-18-output-1.png" class="quarto-figure quarto-figure-center" width="1437" height="763"></p>
 </figure>
 </div>
 </div>
@@ -501,11 +529,11 @@ Usage example (Python):
 
 <section id="absolute-errors-for-depth-bins" class="title-slide slide level1 center">
 <h1>Absolute Errors for Depth Bins</h1>
-<div id="05d6499f" class="cell" data-execution_count="17">
+<div id="685e2b6c" class="cell" data-execution_count="19">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
-<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-18-output-1.png" class="quarto-figure quarto-figure-center" width="1149" height="566"></p>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-20-output-1.png" class="quarto-figure quarto-figure-center" width="1149" height="566"></p>
 </figure>
 </div>
 </div>
@@ -514,11 +542,11 @@ Usage example (Python):
 
 <section id="proportional-errors-for-depth-bins" class="title-slide slide level1 center">
 <h1>Proportional Errors for Depth Bins</h1>
-<div id="830a1f17" class="cell" data-execution_count="18">
+<div id="e60e408b" class="cell" data-execution_count="20">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
-<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-19-output-1.png" class="quarto-figure quarto-figure-center" width="1138" height="567"></p>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-21-output-1.png" class="quarto-figure quarto-figure-center" width="1138" height="567"></p>
 </figure>
 </div>
 </div>
@@ -527,8 +555,8 @@ Usage example (Python):
 
 <section id="peak-depth-and-integrated-chla-metrics-code" class="title-slide slide level1 center">
 <h1>Peak Depth and Integrated CHLA Metrics (Code)</h1>
-<div id="da8917dd" class="cell" data-execution_count="19">
-<div class="cell-output cell-output-display" data-execution_count="19">
+<div id="577b0b29" class="cell" data-execution_count="21">
+<div class="cell-output cell-output-display" data-execution_count="21">
 <div>
 <style scoped="">
     .dataframe tbody tr th:only-of-type {
@@ -630,11 +658,11 @@ Usage example (Python):
 
 <section id="peak-depth-and-height" class="title-slide slide level1 center">
 <h1>Peak Depth and Height</h1>
-<div id="6b2ceda5" class="cell" data-execution_count="20">
+<div id="5633ccad" class="cell" data-execution_count="22">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
-<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-21-output-1.png" class="quarto-figure quarto-figure-center" width="756" height="485"></p>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-23-output-1.png" class="quarto-figure quarto-figure-center" width="756" height="484"></p>
 </figure>
 </div>
 </div>
@@ -643,11 +671,11 @@ Usage example (Python):
 
 <section id="integrated-chla-0200-m-obs-vs-pred" class="title-slide slide level1 center">
 <h1>Integrated CHLA (0–200 m): Obs vs Pred</h1>
-<div id="af258791" class="cell" data-execution_count="21">
+<div id="4c7475a7" class="cell" data-execution_count="23">
 <div class="cell-output cell-output-display">
 <div class="quarto-figure quarto-figure-center">
 <figure>
-<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-22-output-1.png" class="quarto-figure quarto-figure-center" width="469" height="468"></p>
+<p><img data-src="chla_depth_profiles_files/figure-revealjs/cell-24-output-1.png" class="quarto-figure quarto-figure-center" width="469" height="468"></p>
 </figure>
 </div>
 </div>

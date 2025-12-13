@@ -114,7 +114,9 @@ PACE’s spectral richness gives us new power to infer **what’s happening at d
 
 # Nice idea. Yeah. Right.
 
-# Results spoiler. Yes it does work.
+# Results spoiler. It does seem to work...
+
+Caveat: Mostly trained on data from open ocean (BGC-Argo). Most data was for surface CHLA < 1. Need more coastal data. Though it does do a good job for the coastal data and surface CHLA > 10 data that we do have.
 
 ![](figures/pred_vs_obs_profiles.jpg)
 
@@ -638,7 +640,7 @@ depth_centers = metrics_df["z_center"].values
 
 # Performance
 
-Overall we see a close match between our predictions and our test data for CHLA in the upper 10m.
+Overall we see a close match between our predictions and our test data for CHLA in the upper 10m --- for non-coastal data.
 
 ```{python}
 var = "CHLA_0_10"
@@ -1151,6 +1153,204 @@ fig.legend(handles, labels, loc="upper right")
 fig.suptitle("Observed vs BRT-predicted CHLA profiles\n(10 random test profiles)", y=0.98)
 plt.tight_layout(rect=[0, 0, 1, 0.95])
 #plt.savefig("figures/pred_vs_obs_profiles.jpg", dpi=70, bbox_inches="tight")
+plt.show()
+```
+
+# Does it work when surface CHLA is high?
+
+```{python}
+#| fig-align: center
+#| out-height: 70%
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+rrs_cols = [c for c in dataset.columns if c.startswith("pace_Rrs_") and c[-1].isdigit()]
+
+def predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=["solar_hour"]):
+    """
+    Given a single row (one Argo profile) and the dict of BRT models,
+    return predicted CHLA profile (in linear space) across depth bins.
+    """
+    if not extras == None:
+        X_row = row[rrs_cols + extras].to_frame().T  # shape (1, n_features)
+
+    preds_log10 = []
+    for c in chl_cols:
+        model = brt_models[c]
+        y_log10 = model.predict(X_row)[0]
+        preds_log10.append(y_log10)
+
+    preds_log10 = np.array(preds_log10)
+    preds = 10 ** preds_log10  # back to mg m-3
+    return preds
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Sample 10 random indices from test set
+n_profiles = 10
+# 1. Filter test_idx to those with >= 3 non-NaN CHLA bins
+valid_idx = [
+    i for i in train_idx
+#    if dataset.loc[i, chl_cols].count() >= 10
+#    if dataset.loc[i, chl_cols].count() >= 5 and dataset.loc[i, chl_cols].max() >= 1
+    if dataset.loc[i, chl_cols].count() >= 10 and dataset.loc[i, "CHLA_0_10"].max() >= 1
+#    if dataset.loc[i, "CHLA_100_110"] >= 1
+]
+# 2. Sample from valid_idx with a seed
+rng = np.random.default_rng(120)
+n_to_plot = min(n_profiles, len(valid_idx))  # just in case there are fewer than 10
+sample_idx = rng.choice(valid_idx, size=n_to_plot, replace=False)
+
+ncols = 5
+nrows = int(np.ceil(n_profiles / ncols))
+
+fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 4 * nrows), sharey=True)
+axes = np.atleast_1d(axes).ravel()
+
+for ax, idx in zip(axes, sample_idx):
+    row = dataset.iloc[idx]
+
+    # observed profile (line up with chl_cols order)
+    obs_profile = row[chl_cols].to_numpy()
+
+    # predicted profile
+    pred_profile = predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=extra)
+
+    ax.plot(obs_profile, depth_centers, marker="o", label="Obs", linestyle="-")
+    ax.plot(pred_profile, depth_centers, marker="s", label="BRT", linestyle="--")
+
+    ax.set_xlabel("CHLA (mg m$^{-3}$)")
+    ax.grid(True, alpha=0.3)
+
+    prof_id = row.get("type", idx)
+    if prof_id == 0:
+        prof_id = "Argo"
+    else:
+        prof_id = "OOI"
+    ax.set_title(f"type={prof_id} idx={idx}")
+
+# turn off any unused axes
+for ax in axes[n_profiles:]:
+    ax.axis("off")
+
+# Depth axis settings: 0–200 with a little padding
+min_depth = 0
+max_depth = 200
+pad = 5  # meters
+
+for ax in axes:
+    # limits WITH padding, then invert so 0 is at top
+    ax.set_ylim(min_depth - pad, max_depth + pad)
+    ax.invert_yaxis()
+    ax.set_yticks([0, 50, 100, 150, 200])
+
+axes[0].set_ylabel("Depth (m)")
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="upper right")
+fig.suptitle("Observed vs BRT-predicted CHLA profiles\n(10 random profiles where surface > 10 mg/m3)", y=0.98)
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+#plt.savefig("figures/pred_vs_obs_profiles.jpg", dpi=70, bbox_inches="tight")
+plt.show()
+```
+
+# Does it work in coastal waters?
+
+Not enough data. No correction was done for bathymetry (scattering off bottom), so probably not. Need coastal data.
+
+```{python}
+#| fig-align: center
+#| out-height: 70%
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+rrs_cols = [c for c in dataset.columns if c.startswith("pace_Rrs_") and c[-1].isdigit()]
+
+def predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=["solar_hour"]):
+    """
+    Given a single row (one Argo profile) and the dict of BRT models,
+    return predicted CHLA profile (in linear space) across depth bins.
+    """
+    if not extras == None:
+        X_row = row[rrs_cols + extras].to_frame().T  # shape (1, n_features)
+
+    preds_log10 = []
+    for c in chl_cols:
+        model = brt_models[c]
+        y_log10 = model.predict(X_row)[0]
+        preds_log10.append(y_log10)
+
+    preds_log10 = np.array(preds_log10)
+    preds = 10 ** preds_log10  # back to mg m-3
+    return preds
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Sample 10 random indices from test set
+n_profiles = 10
+inshore = ["ooi-ce01issp-sp001-08-flortj000", "ooi-ce06issp-sp001-08-flortj000", 
+           "ooi-cp03ispm-wfp01-04-flortk000", "ooi-cp03issm-rid27-02-flortd000",
+          "ooi-cp03issp-sp001-09-flortj000" ]
+valid_idx = [
+    i for i in train_idx
+    if dataset.loc[i, chl_cols].count() >= 3 and dataset.loc[i, "profile_id"].split("_")[0] in inshore 
+]
+# 2. Sample from valid_idx with a seed
+rng = np.random.default_rng(120)
+n_to_plot = min(n_profiles, len(valid_idx))  # just in case there are fewer than 10
+sample_idx = rng.choice(valid_idx, size=n_to_plot, replace=False)
+
+ncols = 5
+nrows = int(np.ceil(n_profiles / ncols))
+
+fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 4 * nrows), sharey=True)
+axes = np.atleast_1d(axes).ravel()
+
+for ax, idx in zip(axes, sample_idx):
+    row = dataset.iloc[idx]
+
+    # observed profile (line up with chl_cols order)
+    obs_profile = row[chl_cols].to_numpy()
+
+    # predicted profile
+    pred_profile = predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=extra)
+
+    ax.plot(obs_profile, depth_centers, marker="o", label="Obs", linestyle="-")
+    ax.plot(pred_profile, depth_centers, marker="s", label="BRT", linestyle="--")
+
+    ax.set_xlabel("CHLA (mg m$^{-3}$)")
+    ax.grid(True, alpha=0.3)
+
+    prof_id = row.get("type", idx)
+    if prof_id == 0:
+        prof_id = "Argo"
+    else:
+        prof_id = "OOI"
+    ax.set_title(f"type={prof_id} idx={idx}")
+
+# turn off any unused axes
+for ax in axes[n_profiles:]:
+    ax.axis("off")
+
+# Depth axis settings: 0–200 with a little padding
+min_depth = 0
+max_depth = 200
+pad = 5  # meters
+
+for ax in axes:
+    # limits WITH padding, then invert so 0 is at top
+    ax.set_ylim(min_depth - pad, max_depth + pad)
+    ax.invert_yaxis()
+    ax.set_yticks([0, 50, 100, 150, 200])
+
+axes[0].set_ylabel("Depth (m)")
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="upper right")
+fig.suptitle("Observed vs BRT-predicted CHLA profiles\n(10 random profiles from OOI Inshore Moorings)", y=0.98)
+plt.tight_layout(rect=[0, 0, 1, 0.95])
 plt.show()
 ```
 
