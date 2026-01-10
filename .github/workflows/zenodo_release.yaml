@@ -1,31 +1,71 @@
 name: Zenodo Release
+# with option to do a manual release
 
 on:
   release:
     types: [published]
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish to Zenodo (e.g., v0.1.0). Leave blank to use the latest release event context."
+        required: false
+        default: ""
+      zipball_url:
+        description: "Optional zipball URL. If blank, will fetch from GitHub API using the tag."
+        required: false
+        default: ""
 
 jobs:
   deploy:
     runs-on: ubuntu-20.04
 
     steps:
-    - uses: actions/checkout@v3
-    - name: download archive to runner
-      env:
-        zipball: ${{ github.event.release.zipball_url }}
-      run: |
-        name=$(basename ${tarball})        
-        curl -L $zipball > $name
-        echo "archive=${name}" >> $GITHUB_ENV
+      - uses: actions/checkout@v3
 
-    - name: Run Zenodo Deploy
-      uses: nmfs-opensci/zenodo-release@main
-      with:
-        token: ${{ secrets.ZENODO_TOKEN }}
-        version: ${{ github.event.release.tag_name }}
-        zenodo_json: .zenodo.json   # optional if adding to an existing record in Zenodo
-        archive: ${{ env.archive }}
+      - name: Resolve release zipball URL (manual runs)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.zipball_url == '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TAG" ]; then
+            echo "For manual runs, please provide inputs.tag (e.g., v0.1.0)."
+            exit 1
+          fi
+          api="https://api.github.com/repos/$REPO/releases/tags/$TAG"
+          zipball=$(curl -sSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api" | python -c "import sys, json; print(json.load(sys.stdin)['zipball_url'])")
+          echo "zipball_url=$zipball" >> $GITHUB_ENV
+          echo "version=$TAG" >> $GITHUB_ENV
 
+      - name: Set zipball URL + version (release event)
+        if: ${{ github.event_name == 'release' }}
+        run: |
+          echo "zipball_url=${{ github.event.release.zipball_url }}" >> $GITHUB_ENV
+          echo "version=${{ github.event.release.tag_name }}" >> $GITHUB_ENV
+
+      - name: Set zipball URL (manual override)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.zipball_url != '' }}
+        run: |
+          echo "zipball_url=${{ inputs.zipball_url }}" >> $GITHUB_ENV
+          echo "version=${{ inputs.tag }}" >> $GITHUB_ENV
+
+      - name: Download release archive to runner
+        run: |
+          set -euo pipefail
+          name="release_${version}.zip"
+          curl -L "${zipball_url}" -o "$name"
+          echo "archive=$name" >> $GITHUB_ENV
+
+      - name: Run Zenodo Deploy
+        uses: nmfs-opensci/zenodo-release@main
+        with:
+          token: ${{ secrets.ZENODO_TOKEN }}
+          version: ${{ env.version }}
+          zenodo_json: .zenodo.json
+          archive: ${{ env.archive }}
         # Optional DOI for all versions. Leaving this blank (the default) will create
         # a new DOI on every release. Use a DOI that represents all versions will
         # create a new version for this existing DOI.
