@@ -1,0 +1,36 @@
+{
+  "upload_type": "dataset",
+  "title": "CHLA-Z: Global chlorophyll-a vertical distribution (0–200 m) derived from PACE OCI and Bio-Argo (draft)",
+  "description": "CHLA-Z is a global gridded dataset providing estimates of chlorophyll-a concentration as a function of depth (0–200 m) on a regular latitude/longitude grid, along with derived vertical-structure metrics. The product is generated using a boosted regression tree (BRT) model trained on PACE OCI Level-3 mapped remote-sensing reflectances (Rrs) and in-situ chlorophyll profile observations from Bio-Argo and OOI. This Zenodo record establishes provenance and citation for a research/draft dataset; data files are hosted in a public Google Cloud Storage bucket and accessed via cloud-native (Zarr) and NetCDF formats. Methods, validation, and uncertainty characterization are in progress.",
+  "creators": [
+    {
+      "name": "Holmes, Eli",
+      "affiliation": "NOAA Fisheries (NMFS)"
+    }
+  ],
+  "keywords": [
+    "chlorophyll-a",
+    "ocean color",
+    "vertical structure",
+    "PACE",
+    "Bio-Argo",
+    "machine learning",
+    "BRT",
+    "global ocean",
+    "NOAA"
+  ],
+  "license": "CC-BY-4.0",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/fish-pace/chla-z",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "https://storage.googleapis.com/nmfs_odp_nwfsc/CB/fish-pace-datasets/chla-z/",
+      "relation": "isSupplementTo",
+      "resource_type": "dataset"
+    }
+  ],
+  "notes": "Research/draft product. Variable names, spatial grid, and access paths are expected to remain stable; algorithm details, validation, and uncertainty characterization may change in subsequent versions."
+}
