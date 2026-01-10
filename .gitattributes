@@ -10,3 +10,6 @@ notebooks/testing/ export-ignore
 # Exclude raw dev clutter
 *.pyc export-ignore
 .DS_Store export-ignore
+
+# Exclude CI stuff
+.github/ export-ignore
