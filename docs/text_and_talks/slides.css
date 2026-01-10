@@ -1,0 +1,15 @@
+.reveal {
+  font-family: "Source Sans Pro", "Helvetica Neue", Arial, sans-serif;
+  font-size: 26px;
+}
+
+.reveal h1,
+.reveal h2,
+.reveal h3 {
+  font-family: "Source Sans Pro", "Helvetica Neue", Arial, sans-serif;
+  font-weight: 600;
+}
+
+.reveal section {
+  max-width: 1100px;
+}

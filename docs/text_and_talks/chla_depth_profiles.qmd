@@ -1,0 +1,1777 @@
+---
+title: Inferring Global Chlorophyll-a Depth Profiles from PACE Hyperspectral Rrs
+author: Eli Holmes
+format:
+  revealjs:
+    theme:
+      - simple
+    slide-number: true
+    transition: fade
+    center: false
+    fig-align: center
+    out-width: 80%
+    css: slides.css
+execute:
+  echo: false
+  warning: false
+  message: false
+  cache: true
+  cache-refresh: auto
+jupyter:
+  jupytext:
+    text_representation:
+      extension: .qmd
+      format_name: quarto
+      format_version: '1.0'
+      jupytext_version: 1.17.3
+  kernelspec:
+    display_name: Python 3 (ipykernel)
+    language: python
+    name: python3
+---
+
+
+# Motivation: Global CHLA Depth Profiles
+
+- Satellite chlorophyll products primarily represent near-surface waters.
+- Ecosystems and biogeochemical processes depend on the **vertical** distribution of chlorophyll-a.
+- Vertical structure provides information on:
+  - Subsurface chlorophyll maxima
+  - Light–nutrient compensation
+  - Mixed-layer dynamics and stratification
+- At present, there is **no global, routinely produced product** of global daily CHLA depth profiles.
+
+
+```{python}
+# --- Core data handling and plotting libraries ---
+import earthaccess
+import xarray as xr       # for working with labeled multi-dimensional arrays
+import numpy as np        # for numerical operations on arrays
+import pandas as pd
+import matplotlib.pyplot as plt  # for creating plots
+import cartopy.crs as ccrs
+import sklearn
+# --- Custom python functions ---
+import os, importlib
+# Looks to see if you have the file already and if not, downloads from GitHub
+if not os.path.exists("ml_utils.py"):
+    !wget -q https://raw.githubusercontent.com/fish-pace/2025-tutorials/main/ml_utils.py
+
+import ml_utils as mu
+importlib.reload(mu)
+# core stats
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.metrics import r2_score, mean_squared_error
+from scipy.ndimage import uniform_filter1d
+```
+
+# Relevance for Fisheries
+
+- Many fish species use habitats that are structured vertically.
+- Early life stages and forage species often depend on prey fields associated with subsurface productivity layers, especially across the full mixed layer depth.
+- Knowing the vertical distribution of CHLA can contribute to:
+  - Habitat models and species distribution models
+  - Recruitment and survival studies
+  - Understanding the phenology of phytoplankton vertical migration
+
+# Relevance for the Carbon Cycle
+
+- The depth distribution of phytoplankton influences:
+  - Depth of primary production
+  - Carbon export efficiency and remineralization
+  - Radiative transfer and heating within the upper ocean
+- Subsurface chlorophyll maxima can contribute substantially to net primary production.
+- Accurate CHLA profiles are therefore important inputs for biogeochemical and carbon-cycle models.
+
+# PACE Mission: Hyperspectral Ocean Color
+
+- PACE provides hyperspectral water-leaving radiance reflectances, Rrs(λ), across the visible spectrum.
+- These spectra capture:
+  - Pigment composition and concentration
+  - Particle size and concentration
+  - Optical properties that are influenced by subsurface structure
+
+# What Does Hyperspectral Rrs Look Like Compared to Multi-Spectral?
+
+![](figures/OWT.jpg)
+
+# Why Hyperspectral Rrs Gives New Insights into CHLA at depth
+
+- Traditional ocean color sensor provided 3-6 spectra so limited information on the full shape.
+- The additional spectral information relative to multispectral sensors offers new leverage for inferring vertical CHLA structure.
+
+
+# Why Rrs Contains Subsurface Information
+
+Even though Rrs is *measured above the surface*:
+
+- Photons penetrate the water column and interact with particles at depth.
+- Returned Rrs integrates contributions from **multiple depths**, shaped by inherent optical properties.
+- Hyperspectral structure preserves subtle depth-linked signals.
+
+PACE’s spectral richness gives us new power to infer **what’s happening at depth**.
+
+# Results spoiler. It works!
+
+Caveat: Mostly trained on data from open ocean (BGC-Argo). Most data was for surface CHLA < 1. Need more coastal data. Though it does do a decent job for the surface CHLA > 10 data that we do have.
+<center>
+![](figures/pred_vs_obs_profiles.jpg)
+</center>
+
+# General Idea
+
+* Get CHLA depth (z) profiles from in-situ platforms (BGC-Argo and Moorings)
+* Train CHLA(z) on hyperspectral Rrs using Boosted Regression Trees
+* Predict CHLA(z)
+* Create daily global maps of CHLA(z) using PACE Rrs daily files
+
+# BGC-Argo
+
+![](figures/argo_float_cycle.png)
+
+# In-situ Platforms: BGC-Argo
+
+- Continuous vertical CHLA profiles
+- Global
+- **Deep Water** (>1000m) not coastal
+
+```{python}
+#| fig-align: center
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
+# Load data
+url = "https://raw.githubusercontent.com/fish-pace/fish-pace-datasets/main/data/CHLA_argo_profiles.parquet"
+df = pd.read_parquet(url)
+
+df_clean = df
+
+# Projections
+data_crs = ccrs.PlateCarree()
+map_crs = ccrs.Robinson()
+
+fig = plt.figure(figsize=(10, 5))
+ax = plt.axes(projection=map_crs)
+
+# Make sure we see the WHOLE globe
+ax.set_global()
+
+# Add coastlines and land
+ax.coastlines(resolution="110m")
+ax.add_feature(cfeature.LAND, facecolor="0.9", zorder=0)
+ax.add_feature(cfeature.OCEAN, facecolor="white", zorder=0)
+
+# Gridlines (no labels for Robinson)
+gl = ax.gridlines(linestyle="--", alpha=0.5)
+
+# Plot points
+ax.scatter(
+    df_clean["LONGITUDE"].values,
+    df_clean["LATITUDE"].values,
+    s=1,
+    marker=".",
+    transform=data_crs,
+    zorder=2,
+)
+
+ax.set_title("Argo CHLA data Mar 2024 to Dec 2025")
+plt.tight_layout()
+plt.show()
+```
+
+# A Chlorophyll Profile from an BGC-Argo Buoy
+
+```{python}
+#| fig-align: center
+#| out-height: 80%
+
+# Load data from GitHub
+import pandas as pd
+url = "https://raw.githubusercontent.com/fish-pace/fish-pace-datasets/main/data/argo_na_2024_03.parquet"
+df_na = pd.read_parquet(url)
+
+# make plot
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# Suppose you already have:
+# df_na = pd.read_parquet("argo_na_2024_03.parquet")
+df = df_na  # just to keep the name short
+
+# Unique platform numbers in the dataset
+platforms = df["PLATFORM_NUMBER"].unique()
+plat = int(platforms[2])
+
+# All cycles for that platform
+cycles = df.loc[df["PLATFORM_NUMBER"] == plat, "CYCLE_NUMBER"].unique()
+cyc = int(cycles[0])
+
+# Select all points belonging to that profile
+prof = df[(df["PLATFORM_NUMBER"] == plat) & (df["CYCLE_NUMBER"] == cyc)]
+
+chl = prof["CHLA"].to_numpy()
+pres = prof["PRES"].to_numpy()
+qc   = prof["CHLA_QC"]          # may be numeric or string depending on source
+
+# Depth in meters ~ pressure in dbar
+depth = pres
+depth_plot = np.clip(depth, a_min=1, a_max=None)  # avoid 0 for log scale
+
+# Masks for good/bad quality
+if np.issubdtype(qc.dtype, np.number):
+    # numeric QC flags, e.g. 1, 2 = good
+    good_mask = qc.isin([1, 2]).to_numpy()
+else:
+    # string QC flags, e.g. 'A', 'B' = good
+    good_mask = qc.isin(["A", "B"]).to_numpy()
+
+bad_mask = ~good_mask
+
+fig, ax = plt.subplots(figsize=(4, 6))
+
+# Plot good-quality points
+ax.scatter(
+    chl[good_mask],
+    depth_plot[good_mask],
+    label="Good Quality",
+    s=30,
+)
+
+# Plot bad-quality points
+ax.scatter(
+    chl[bad_mask],
+    depth_plot[bad_mask],
+    label="Bad Quality",
+    s=30,
+    marker="^",
+)
+
+# Add a shaded layer representing "surface CHLA" (e.g. 0–10 m)
+z_sat = 10  # meters; adjust as desired
+ax.axhspan(0, z_sat, color="lightgrey", alpha=0.5, label="CHLA surface")
+
+# Log scale on depth axis, surface at top
+ax.set_yscale("log")
+ax.invert_yaxis()
+
+ax.set_xlabel("CHLA (mg m$^{-3}$)")
+ax.set_ylabel("Log Depth (m)")
+ax.set_title(f"Bio-Argo profile\nFloat {plat}, cycle {cyc}")
+ax.grid(True, which="both", alpha=0.4)
+ax.legend(loc="lower right")
+
+plt.figtext(
+    0.5, -0.1,
+    "What is going on here? This happens to be from a region with clear water "
+    "and low nutrients in the upper layer. This band of phytoplankton at around "
+    "100 m is common in nutrient-poor waters.",
+    wrap=True,
+    horizontalalignment="center",
+    fontsize=10,
+    color="gray",
+)
+
+plt.tight_layout()
+plt.show()
+```
+
+
+# Ocean Observing Initiative (OOI)
+
+- Fixed moorings with fluorometers at discrete depths  
+- High-frequency CHLA, temperature, salinity  
+- Key for shallow structure, seasonal cycles, and diel variability
+
+```{python}
+#| fig-align: center
+import pandas as pd
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
+# Load data
+url = "https://raw.githubusercontent.com/fish-pace/fish-pace-datasets/main/data/CHLA_ooi_profiles.parquet"
+df = pd.read_parquet(url)
+
+df_clean = df
+
+# Projections
+data_crs = ccrs.PlateCarree()
+map_crs = ccrs.Robinson()
+
+fig = plt.figure(figsize=(10, 5))
+ax = plt.axes(projection=map_crs)
+
+# Make sure we see the WHOLE globe
+ax.set_global()
+
+# Add coastlines and land
+ax.coastlines(resolution="110m")
+ax.add_feature(cfeature.LAND, facecolor="0.9", zorder=0)
+ax.add_feature(cfeature.OCEAN, facecolor="white", zorder=0)
+
+# Gridlines (no labels for Robinson)
+gl = ax.gridlines(linestyle="--", alpha=0.5)
+
+# Plot points
+ax.scatter(
+    df_clean["lon"].values,
+    df_clean["lat"].values,
+    s=20,
+    marker="o",
+    transform=data_crs,
+    zorder=2,
+)
+
+ax.set_title("OOI CHLA data Mar 2024 to Dec 2025")
+plt.tight_layout()
+plt.show()
+```
+
+# OOI Provides Coastal and Shelf Data
+
+![](figures/ooi.jpg)
+
+# Preparing Data for Training
+
+* Binning
+* Matchups to PACE Rrs
+
+# Depth Binning in-situ Data (Critical Step)
+
+Raw profiles come at irregular depths → ML models need consistent targets.
+
+- Standardize to bins (e.g., 0–10 m, 10–20 m, …).
+- For each profile:
+  - Interpolate or average CHLA within each bin.
+  - Keep bins even if other depths are missing.
+- Many profiles have **partial coverage** but still provide useful training data.
+
+👉 This is why we train **one BRT per depth bin** instead of forcing a single parametric profile shape.
+
+
+# Matching Step: Match in-situ lat/lon/day to PACE Level 3 daily data
+
+* Get Rrs for all 128 wavelengths for every row of data
+* Remove any rows with no Rrs. 80% has no Rrs since PACE data is from swaths and is not gap-filled.
+* Remove data with that seems to be bio-fouled (sensor issue). Ca 20 rows of data
+* Result: **5540** in-situ CHLA depth profiles. Roughly 450 to 700 for each depth bin.
+
+
+# The Modeling Step
+
+* Add on solar_hour to the feature set because that has a big impact on in-situ CHLA estimates
+* Add on the type of platform (Argo versus OOI) since those are little different
+* Divide the data into training (80%) and testing (20%)
+* Fit BRT to the training data
+* Evaluate performance using the test data (CHLA depth profiles)
+
+
+# What is a Boosted Regression Tree (BRT)?
+
+- Ensemble of many shallow decision trees  
+- Each tree learns the residuals of the previous ones (“boosting”)  
+- Handles:
+  - Nonlinear relationships
+  - High-dimensional spectral predictors
+  - Heterogeneous covariates
+- Makes **no assumptions** about the vertical shape of CHLA profiles.
+- I used `sklearn` `HistGradientBoostingRegressor()` function. Standard. Easy.
+
+# One BRT Per Depth Bin
+
+Each model predicts **CHLA in a single depth range**:
+
+- Input:  
+  - Hyperspectral PACE Rrs(λ)  
+  - Extras (solar hour, platform type)
+- Output:  
+  - CHLA in that bin (e.g., 0–10 m, 10–20 m, …)
+
+Benefits:
+
+- Uses all data because it can use partial profiles (only bins with valid CHLA).
+- Avoids imposing a fixed profile shape.
+- Enables simple diagnostics: R², RMSE, bias vs depth.
+
+
+# Results
+
+```{python}
+## Load model
+bundle = mu.load_ml_bundle("models/brt_chla_profiles_bundle.zip")
+brt_models = bundle.model
+meta = bundle.meta
+rrs_cols = meta["rrs_cols"]
+chl_cols = meta["y_col"]
+extra = meta["extra_cols"]
+dataset = bundle.data["dataset"]
+train_idx = bundle.data["train_idx"]
+test_idx = bundle.data["test_idx"]
+X_train = bundle.data["X_train"]
+X_test = bundle.data["X_test"]
+y_train_all = bundle.data["y_train"]
+y_test_all = bundle.data["y_test"]
+```
+
+```{python}
+# Depth-wise Metrics for Each Bin (Code)
+from sklearn.metrics import r2_score, mean_squared_error
+import numpy as np
+
+def model_fit_metrics(
+    var,
+    dataset,
+    brt_model,
+    idx,
+    extras=("solar_hour", "type"),
+):
+    """
+    Compute metrics for a *fitted* BRT for one CHLA_A_B bin column `var`
+    using a specified subset of rows (idx).
+
+    Parameters
+    ----------
+    var : str
+        CHLA column name like "CHLA_10_20".
+    dataset : pd.DataFrame
+        Full dataset used for training/validation.
+    brt_model :
+        Fitted HistGradientBoostingRegressor (or compatible .predict() model).
+    idx : array-like of int
+        Row indices to use for evaluation (e.g. train_idx, test_idx, valid_idx).
+    extras : sequence of str, optional
+        Names of extra predictor columns beyond the Rrs ones.
+
+    Returns
+    -------
+    metrics : dict
+        {
+          "N": int,
+          "r2_log": float,
+          "rmse_log": float,
+          "bias_log": float,
+          "rmse_lin": float,
+          "bias_lin": float,
+          "rmse_rel": float,
+          "bias_rel": float,
+          "p90_abs_err": float,
+          "median_abs_err": float,
+        }
+    y_pred_lin : np.ndarray
+        Predicted CHLA (linear scale) for the used rows.
+    y_true_lin : np.ndarray
+        True CHLA (linear scale) for the used rows.
+    """
+    y_col = var
+
+    # Rrs predictor columns
+    rrs_cols = [
+        c for c in dataset.columns
+        if c.startswith("pace_Rrs_") and c[-1].isdigit()
+    ]
+
+    extras = list(extras)
+
+    # Subset the dataset to the index set and relevant columns
+    df = dataset.loc[idx, ["time", "lat", "lon", y_col] + rrs_cols + extras].copy()
+    df = df.rename(columns={y_col: "y"})
+
+    # Keep only positive, finite CHLA
+    mask_valid = np.isfinite(df["y"]) & (df["y"] > 0)
+    df = df[mask_valid]
+
+    if df.empty:
+        metrics = {
+            "N": 0,
+            "r2_log": np.nan,
+            "rmse_log": np.nan,
+            "bias_log": np.nan,
+            "rmse_lin": np.nan,
+            "bias_lin": np.nan,
+            "rmse_rel": np.nan,
+            "bias_rel": np.nan,
+            "p90_abs_err": np.nan,
+            "median_abs_err": np.nan,
+        }
+        return metrics, np.array([]), np.array([])
+
+    # Log10 transform for the model space
+    y_log = np.log10(df["y"].values.astype(float))
+    X = df[rrs_cols + extras]
+
+    # ---- log10-scale metrics ----
+    y_pred_log = brt_model.predict(X)
+    y_true_log = y_log
+
+    r2_log = r2_score(y_true_log, y_pred_log)
+    rmse_log = np.sqrt(mean_squared_error(y_true_log, y_pred_log))
+    bias_log = np.mean(y_true_log - y_pred_log)
+
+    # Number of samples
+    N = len(y_true_log)
+
+    # ---- back-transform for linear-scale metrics ----
+    y_true_lin = 10.0**y_true_log
+    y_pred_lin = 10.0**y_pred_log
+
+    diff = y_true_lin - y_pred_lin
+    rmse_lin = np.sqrt(mean_squared_error(y_true_lin, y_pred_lin))
+    bias_lin = np.mean(diff)
+
+    mean_true = np.mean(y_true_lin)
+    if mean_true > 0:
+        rmse_rel = rmse_lin / mean_true
+        bias_rel = bias_lin / mean_true
+    else:
+        rmse_rel = np.nan
+        bias_rel = np.nan
+
+    abs_diff = np.abs(diff)
+    p90_abs_err = np.percentile(abs_diff, 90)
+    median_abs_err = np.median(abs_diff)
+
+    metrics = {
+        "N": N,
+        "r2_log": r2_log,
+        "rmse_log": rmse_log,
+        "bias_log": bias_log,
+        "rmse_lin": rmse_lin,
+        "bias_lin": bias_lin,
+        "rmse_rel": rmse_rel,
+        "bias_rel": bias_rel,
+        "p90_abs_err": p90_abs_err,
+        "median_abs_err": median_abs_err,
+    }
+
+    return metrics, y_pred_lin, y_true_lin
+
+import numpy as np
+import pandas as pd
+
+def parse_depth_bin(col):
+    """
+    Expect names like CHLA_0_10, CHLA_10_20, etc.
+    Returns (z_start, z_end) as ints.
+    """
+    _, a, b = col.split("_")
+    return int(a), int(b)
+
+def depth_metrics_table(
+    brt_models,
+    dataset,
+    idx,
+    extras=("solar_hour", "type"),
+):
+    """
+    Compute model_fit_metrics for all CHLA depth bins and return as a DataFrame.
+
+    Parameters
+    ----------
+    brt_models : dict
+        Mapping from CHLA bin name -> fitted model, e.g. {"CHLA_0_10": model, ...}
+    dataset : pd.DataFrame
+        Full dataset used for training/validation.
+    idx : array-like of int
+        Row indices for evaluation (e.g. train_idx, test_idx, valid_idx, etc.).
+    extras : sequence of str, optional
+        Extra predictor column names (beyond pace_Rrs_*).
+
+    Returns
+    -------
+    metrics_df : pd.DataFrame
+        One row per depth bin with columns:
+          ["var", "z_start", "z_end", "z_center", ...all metrics from model_fit_metrics...]
+    """
+    extras = list(extras)
+
+    # Depth bins from the model keys
+    chl_cols = list(brt_models.keys())
+    chl_cols = sorted(chl_cols, key=lambda c: parse_depth_bin(c)[0])
+
+    rows = []
+
+    for var in chl_cols:
+        z_start, z_end = parse_depth_bin(var)
+        z_center = 0.5 * (z_start + z_end)
+
+        model = brt_models[var]
+
+        # metrics, y_pred_lin, y_true_lin come from the helper we defined earlier
+        metrics, y_pred_lin, y_true_lin = model_fit_metrics(
+            var=var,
+            dataset=dataset,
+            brt_model=model,
+            idx=idx,
+            extras=extras,
+        )
+
+        row = {
+            "var": var,
+            "z_start": z_start,
+            "z_end": z_end,
+            "z_center": z_center,
+        }
+        row.update(metrics)   # add all metric keys/values
+
+        rows.append(row)
+
+    metrics_df = pd.DataFrame(rows)
+    metrics_df = metrics_df.sort_values("z_center").reset_index(drop=True)
+    return metrics_df
+```
+
+```{python}
+metrics_df = depth_metrics_table(
+    brt_models,
+    dataset,
+    test_idx,
+    extras=("solar_hour", "type"),
+)
+# Use depth centers from the metrics table
+# used in the plots
+depth_centers = metrics_df["z_center"].values
+```
+
+# Performance
+
+Overall we see a close match between our predictions and our test data for CHLA in the upper 10m --- for non-coastal data.
+
+```{python}
+var = "CHLA_0_10"
+# includes rows where y_test is NaN
+y_pred = brt_models[var].predict(X_test)
+y_test = y_test_all[var]
+```
+
+```{python}
+#| fig-align: center
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import r2_score, mean_squared_error
+
+y_test = np.log10(y_test)
+
+# Make a boolean mask of valid entries: no NaNs, finite predictions
+valid = y_test.notna() & np.isfinite(y_test) & y_test>0
+
+y_true = y_test[valid]
+y_pred = y_pred[valid]
+
+# Compute some metrics
+r2 = r2_score(y_true, y_pred)
+rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+
+# Scatter plot
+plt.figure(figsize=(5, 5))
+plt.scatter(y_true, y_pred, s=3, alpha=0.3)
+
+# 1:1 line
+lims = [
+    min(y_true.min(), y_pred.min()),
+    max(y_true.max(), y_pred.max())
+]
+plt.plot(lims, lims, "k--", linewidth=1)
+plt.xlim(lims)
+plt.ylim(lims)
+
+plt.xlabel("log10 Chl-a (true)")
+plt.ylabel("log10 Chl-a (prediction)")
+plt.title(f"Prediction vs Truth\nR² = {r2:.3f}, RMSE = {rmse:.3f}")
+plt.tight_layout()
+plt.show()
+```
+
+# Prediction of CHLA 0 to 10m
+
+Using PACE data for hyperspectral Rrs, we can make a prediction of surface CHLA. Let's compare to PACE's surface CHLA product as a first pass check, but note that these are different products trained on different in-situ data. Note surface CHLA is not our goal. 
+
+```{python}
+# Get PACE Rrs
+import earthaccess
+import xarray as xr
+
+day = "2024-07-08"
+
+auth = earthaccess.login()
+# are we authenticated?
+if not auth.authenticated:
+    # ask for credentials and persist them in a .netrc file
+    auth.login(strategy="interactive", persist=True)
+
+# Get Rrs
+rrs_results = earthaccess.search_data(
+    short_name = "PACE_OCI_L3M_RRS",
+    temporal = (day, day),
+    granule_name="*.DAY.*.4km.nc"
+)
+f = earthaccess.open(rrs_results[0:1], pqdm_kwargs={"disable": True})
+rrs_ds = xr.open_dataset(f[0])
+
+# Get chla
+chl_results = earthaccess.search_data(
+    short_name = "PACE_OCI_L3M_CHL",
+    temporal = (day, day),
+    granule_name="*.DAY.*.4km.nc"
+)
+f = earthaccess.open(chl_results[0:1], pqdm_kwargs={"disable": True})
+chl_ds = xr.open_dataset(f[0])
+chl_ds["log10_chla"] = np.log10(chl_ds["chlor_a"])
+```
+
+```{python}
+# functions to make prediction and plot
+import xarray as xr
+def make_prediction(R: xr.Dataset, brt_model, feature_cols, solar_const=0, type_const=1):
+    # --- 3. Stack lat/lon into a single "pixel" dimension ---
+    R2 = R.stack(pixel=("lat", "lon"))  # (pixel, wavelength)
+    R2 = R2.transpose("pixel", "wavelength")
+    # Load this subset into memory
+    R2_vals = R2.values  # shape: (n_pixel, n_wavelength)
+
+    # --- 4. Make predictions dataframe
+    # Map of constant feature names → values you want to use
+    constant_values = {
+        "solar_hour": solar_const,
+        "type": type_const,
+    }    
+    # Start with the non-constant feature columns (e.g., your spectral bands)
+    non_constant_cols = [c for c in feature_cols if c not in constant_values]    
+    # Build the base DataFrame from R2_vals
+    df_pred = pd.DataFrame(R2_vals, columns=non_constant_cols)    
+    # Add any constant columns that are actually in feature_cols
+    for name, value in constant_values.items():
+        if name in feature_cols:
+            df_pred[name] = value
+
+    # Ensure columns are in the correct order expected by the model
+    df_pred = df_pred[feature_cols]
+
+    # --- 5. Handle NaNs: BRTs generally cannot handle NaNs in predictors ---
+    # Rrs dataset will have loads of NaNs
+    valid_mask = ~df_pred.isna().any(axis=1)  # pixels with all bands present
+    df_valid = df_pred[valid_mask]
+
+    # Prepare an array for predictions (fill NaNs where we cannot predict)
+    y_pred_flat = np.full(df_pred.shape[0], np.nan, dtype=float)
+
+    # --- 6. Predict on the valid pixels ---
+    if len(df_valid) > 0:
+        y_pred_flat[valid_mask.values] = brt_model.predict(df_valid)
+
+    # --- 7. Reshape back to (lat, lon) ---
+    nlat = R.sizes["lat"]
+    nlon = R.sizes["lon"]
+    pred_map = y_pred_flat.reshape(nlat, nlon)
+
+    pred_da = xr.DataArray(
+        pred_map,
+        coords={"lat": R["lat"], "lon": R["lon"]},
+        dims=("lat", "lon"),
+        name="y_pred"
+    )
+
+    return pred_da
+
+import numpy as np
+import xarray as xr
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
+
+def make_plot(
+    pred_da: xr.DataArray,
+    true_da: xr.DataArray | None = None,
+    diff: bool = True,
+    shared_colorbar: bool = True,
+    true_label: str = "PACE Chlorophyll",
+    pred_label: str = "BRT prediction",
+    cmap_pred: str = "viridis",
+):
+    """
+    Plot prediction, optionally with truth and difference.
+
+    Parameters
+    ----------
+    pred_da : xr.DataArray
+        Prediction on a lat/lon grid.
+    true_da : xr.DataArray or None
+        Truth on the same lat/lon grid. If None, only pred is plotted.
+ #   diff : bool, default True
+        If True and true_da is provided, add a third panel with pred - truth.
+    shared_colorbar : bool, default True
+        If True, use one colorbar for truth+prediction panels.
+    """
+    # -----------------------
+    # Case 1: only prediction
+    # -----------------------
+    if true_da is None:
+        # robust-ish limits from prediction only
+        vals = pred_da.values.ravel()
+        vmin, vmax = np.nanpercentile(vals, (0, 100))
+
+        fig, ax = plt.subplots(
+            1, 1,
+            figsize=(6, 4),
+            subplot_kw={"projection": ccrs.PlateCarree()},
+            constrained_layout=True,
+        )
+
+        ax.coastlines()
+        ax.add_feature(cfeature.LAND, facecolor="0.9")
+
+        im = ax.pcolormesh(
+            pred_da["lon"],
+            pred_da["lat"],
+            pred_da,
+            transform=ccrs.PlateCarree(),
+           vmin=vmin, vmax=vmax,
+            cmap=cmap_pred,
+        )
+
+        ax.set_title(pred_label)
+        cbar = fig.colorbar(im, ax=ax, orientation="horizontal", fraction=0.06, pad=0.08)
+        cbar.set_label(pred_label)
+        plt.show()
+        return
+
+    # ------------------------------------------------
+    # Case 2: truth + prediction (+/- difference)
+    # ------------------------------------------------
+    if diff:
+        ncols = 3
+    else:
+        ncols = 2
+
+    fig, axs = plt.subplots(
+        1, ncols,
+        figsize=(5 * ncols, 5),
+        subplot_kw={"projection": ccrs.PlateCarree()},
+        constrained_layout=True,
+    )
+
+    if ncols == 1:
+        axs = [axs]  # just in case, but here ncols>=2
+
+    # 1. Compute robust-ish limits for truth & prediction
+    all_vals = np.concatenate([
+        true_da.values.ravel(),
+        pred_da.values.ravel()
+    ])
+    vmin, vmax = np.nanpercentile(all_vals, (0, 100))
+
+    # -------------------
+    # Panel 1: Truth
+    # -------------------
+    ax = axs[0]
+    ax.coastlines()
+    ax.add_feature(cfeature.LAND, facecolor="0.9")
+    im_truth = ax.pcolormesh(
+        true_da["lon"],
+        true_da["lat"],
+        true_da,
+        transform=ccrs.PlateCarree(),
+        vmin=vmin, vmax=vmax,
+        cmap=cmap_pred,
+    )
+    ax.set_title(true_label)
+
+    # -------------------
+    # Panel 2: Prediction
+    # -------------------
+    ax = axs[1]
+    ax.coastlines()
+    ax.add_feature(cfeature.LAND, facecolor="0.9")
+    im_pred = ax.pcolormesh(
+        pred_da["lon"],
+        pred_da["lat"],
+        pred_da,
+        transform=ccrs.PlateCarree(),
+        vmin=vmin, vmax=vmax,
+        cmap=cmap_pred,
+    )
+    ax.set_title(pred_label)
+
+    # -------------------
+    # Panel 3: Difference (optional)
+    # -------------------
+    if diff:
+        diff_da = true_da - pred_da
+
+        # Symmetric limits for diff
+        diff_vals = diff_da.values.ravel()
+        diff_max = np.nanpercentile(np.abs(diff_vals), 98)
+        diff_vmin, diff_vmax = -diff_max, diff_max
+
+        ax = axs[2]
+        ax.coastlines()
+        ax.add_feature(cfeature.LAND, facecolor="0.9")
+        im_diff = ax.pcolormesh(
+            diff_da["lon"],
+            diff_da["lat"],
+            diff_da,
+            transform=ccrs.PlateCarree(),
+            vmin=diff_vmin,
+            vmax=diff_vmax,
+            cmap="coolwarm",
+        )
+        ax.set_title("PACE - BRT")
+
+    # -------------------
+    # Colorbars
+    # -------------------
+    if shared_colorbar:
+        # one shared colorbar for truth + prediction
+        cbar1 = fig.colorbar(
+            im_pred,
+            ax=axs[:2],
+            orientation="horizontal",
+            fraction=0.05,
+            pad=0.08,
+        )
+        cbar1.set_label("Value")
+    else:
+        # separate colorbars for PACE and BRT
+        cbar_t = fig.colorbar(
+            im_truth,
+            ax=axs[0],
+            orientation="horizontal",
+            fraction=0.05,
+            pad=0.08,
+        )
+        cbar_t.set_label(true_label)
+
+        cbar_p = fig.colorbar(
+            im_pred,
+            ax=axs[1],
+            orientation="horizontal",
+            fraction=0.05,
+            pad=0.08,
+        )
+        cbar_p.set_label(pred_label)
+
+    if diff:
+        cbar2 = fig.colorbar(
+            im_diff,
+            ax=axs[-1],
+            orientation="horizontal",
+            fraction=0.05,
+            pad=0.08,
+        )
+        cbar2.set_label("PACE - BRT")
+
+    plt.show()
+```
+
+```{python}
+# Northwest Atlantic
+# Set a box
+lat_min, lat_max = 20, 60
+lon_min, lon_max = -70, -40
+# Get Rrs for that box
+R = rrs_ds["Rrs"].sel(
+    lat=slice(lat_max, lat_min),   # decreasing lat coord: max→min
+    lon=slice(lon_min, lon_max)
+)
+R = R.transpose("lat", "lon", "wavelength")
+
+# Get CHLA for that box
+chla = chl_ds["log10_chla"].sel(
+    lat=slice(lat_max, lat_min),   # decreasing lat coord: max→min
+    lon=slice(lon_min, lon_max)
+)
+chla = chla.transpose("lat", "lon")
+```
+
+```{python}
+#| fig-align: center
+
+# Make prediction
+var = "CHLA_0_10"
+feature_cols = list(X_train.columns)
+pred_da = make_prediction(R, brt_models[var], feature_cols, solar_const=0, type_const=1)
+make_plot(pred_da, chla)
+```
+
+We do not expect these to be identical as the PACE chlor_a is based on the classic Rrs ratio algorithm while the BRT uses the whole spectrum but most importantly was trained on Argo and OOI florometer measurements. 
+
+
+## Scatter plot
+
+PACE chlor_a to BRT with type = 1 (ooi) and solar_hour = 0 (midnight)
+
+Notice that at high PACE `chlor_a`, the BRT model predicts lower `CHLA_0_10`. We might be able to correct this by using the whole CHLA depth profile (next section). 
+
+```{python}
+#| fig-align: center
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import r2_score, mean_squared_error
+
+# Flatten and drop NaNs
+y_pace = chla.values.ravel()
+y_pred = pred_da.values.ravel()
+
+mask = np.isfinite(y_pace) & np.isfinite(y_pred)# & (y_pace < 0)
+y_pace = y_pace[mask]
+y_pred = y_pred[mask]
+
+# Compute some metrics
+r2 = r2_score(y_pace, y_pred)
+rmse = np.sqrt(mean_squared_error(y_pace, y_pred))
+bias = np.mean(y_pace - y_pred)
+
+# Scatter plot
+plt.figure(figsize=(5, 5))
+plt.scatter(y_pace, y_pred, s=3, alpha=0.3)
+
+# 1:1 line
+lims = [
+    min(y_pace.min(), y_pred.min()),
+    max(y_pace.max(), y_pred.max())
+]
+plt.plot(lims, lims, "k--", linewidth=1)
+plt.xlim(lims)
+plt.ylim(lims)
+
+plt.xlabel("log10 Chl-a (PACE)")
+plt.ylabel("log10 Chl-a (prediction)")
+plt.title(f"PACE vs BRT Prediction\nR² = {r2:.3f}, RMSE = {rmse:.3f}, bias = {bias:.3f}")
+plt.tight_layout()
+plt.show()
+```
+
+# Global prediction
+
+We can do this for the whole globe.
+
+![](figures/global_CHLA_0_10_pred.png)
+
+# Let's predict CHLA depth profiles
+
+## CHLA Profiles: Observed vs BRT  { .nostretch }
+
+```{python}
+#| fig-align: center
+#| out-width: 30%
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+rrs_cols = [c for c in dataset.columns if c.startswith("pace_Rrs_") and c[-1].isdigit()]
+
+def predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=["solar_hour"]):
+    """
+    Given a single row (one Argo profile) and the dict of BRT models,
+    return predicted CHLA profile (in linear space) across depth bins.
+    """
+    if not extras == None:
+        X_row = row[rrs_cols + extras].to_frame().T  # shape (1, n_features)
+
+    preds_log10 = []
+    for c in chl_cols:
+        model = brt_models[c]
+        y_log10 = model.predict(X_row)[0]
+        preds_log10.append(y_log10)
+
+    preds_log10 = np.array(preds_log10)
+    preds = 10 ** preds_log10  # back to mg m-3
+    return preds
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Sample 10 random indices from test set
+n_profiles = 10
+# 1. Filter test_idx to those with >= 3 non-NaN CHLA bins
+valid_idx = [
+    i for i in train_idx
+    if dataset.loc[i, chl_cols].count() >= 10
+#    if dataset.loc[i, chl_cols].count() >= 5 and dataset.loc[i, chl_cols].max() >= 1
+#    if dataset.loc[i, chl_cols].count() >= 0 and dataset.loc[i, "CHLA_100_110"].max() >= 1
+#    if dataset.loc[i, "CHLA_100_110"] >= 1
+]
+# 2. Sample from valid_idx with a seed
+rng = np.random.default_rng(120)
+n_to_plot = min(n_profiles, len(valid_idx))  # just in case there are fewer than 10
+sample_idx = rng.choice(valid_idx, size=n_to_plot, replace=False)
+
+ncols = 5
+nrows = int(np.ceil(n_profiles / ncols))
+
+fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 4 * nrows), sharey=True)
+axes = np.atleast_1d(axes).ravel()
+
+for ax, idx in zip(axes, sample_idx):
+    row = dataset.iloc[idx]
+
+    # observed profile (line up with chl_cols order)
+    obs_profile = row[chl_cols].to_numpy()
+
+    # predicted profile
+    pred_profile = predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=extra)
+
+    ax.plot(obs_profile, depth_centers, marker="o", label="Obs", linestyle="-")
+    ax.plot(pred_profile, depth_centers, marker="s", label="BRT", linestyle="--")
+
+    ax.set_xlabel("CHLA (mg m$^{-3}$)")
+    ax.grid(True, alpha=0.3)
+
+    prof_id = row.get("type", idx)
+    if prof_id == 0:
+        prof_id = "Argo"
+    else:
+        prof_id = "OOI"
+    ax.set_title(f"type={prof_id} idx={idx}")
+
+# turn off any unused axes
+for ax in axes[n_profiles:]:
+    ax.axis("off")
+
+# Depth axis settings: 0–200 with a little padding
+min_depth = 0
+max_depth = 200
+pad = 5  # meters
+
+for ax in axes:
+    # limits WITH padding, then invert so 0 is at top
+    ax.set_ylim(min_depth - pad, max_depth + pad)
+    ax.invert_yaxis()
+    ax.set_yticks([0, 50, 100, 150, 200])
+
+axes[0].set_ylabel("Depth (m)")
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="upper right")
+fig.suptitle("Observed vs BRT-predicted CHLA profiles\n(10 random test profiles)", y=0.98)
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+#plt.savefig("figures/pred_vs_obs_profiles.jpg", dpi=70, bbox_inches="tight")
+plt.show()
+```
+
+# When surface CHLA is high?  { .nostretch }
+
+```{python}
+#| fig-align: center
+#| out-width: 60%
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+rrs_cols = [c for c in dataset.columns if c.startswith("pace_Rrs_") and c[-1].isdigit()]
+
+def predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=["solar_hour"]):
+    """
+    Given a single row (one Argo profile) and the dict of BRT models,
+    return predicted CHLA profile (in linear space) across depth bins.
+    """
+    if not extras == None:
+        X_row = row[rrs_cols + extras].to_frame().T  # shape (1, n_features)
+
+    preds_log10 = []
+    for c in chl_cols:
+        model = brt_models[c]
+        y_log10 = model.predict(X_row)[0]
+        preds_log10.append(y_log10)
+
+    preds_log10 = np.array(preds_log10)
+    preds = 10 ** preds_log10  # back to mg m-3
+    return preds
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Sample 10 random indices from test set
+n_profiles = 10
+# 1. Filter test_idx to those with >= 3 non-NaN CHLA bins
+valid_idx = [
+    i for i in train_idx
+#    if dataset.loc[i, chl_cols].count() >= 10
+#    if dataset.loc[i, chl_cols].count() >= 5 and dataset.loc[i, chl_cols].max() >= 1
+    if dataset.loc[i, chl_cols].count() >= 10 and dataset.loc[i, "CHLA_0_10"].max() >= 1
+#    if dataset.loc[i, "CHLA_100_110"] >= 1
+]
+# 2. Sample from valid_idx with a seed
+rng = np.random.default_rng(120)
+n_to_plot = min(n_profiles, len(valid_idx))  # just in case there are fewer than 10
+sample_idx = rng.choice(valid_idx, size=n_to_plot, replace=False)
+
+ncols = 5
+nrows = int(np.ceil(n_profiles / ncols))
+
+fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 4 * nrows), sharey=True)
+axes = np.atleast_1d(axes).ravel()
+
+for ax, idx in zip(axes, sample_idx):
+    row = dataset.iloc[idx]
+
+    # observed profile (line up with chl_cols order)
+    obs_profile = row[chl_cols].to_numpy()
+
+    # predicted profile
+    pred_profile = predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=extra)
+
+    ax.plot(obs_profile, depth_centers, marker="o", label="Obs", linestyle="-")
+    ax.plot(pred_profile, depth_centers, marker="s", label="BRT", linestyle="--")
+
+    ax.set_xlabel("CHLA (mg m$^{-3}$)")
+    ax.grid(True, alpha=0.3)
+
+    prof_id = row.get("type", idx)
+    if prof_id == 0:
+        prof_id = "Argo"
+    else:
+        prof_id = "OOI"
+    ax.set_title(f"type={prof_id} idx={idx}")
+
+# turn off any unused axes
+for ax in axes[n_profiles:]:
+    ax.axis("off")
+
+# Depth axis settings: 0–200 with a little padding
+min_depth = 0
+max_depth = 200
+pad = 5  # meters
+
+for ax in axes:
+    # limits WITH padding, then invert so 0 is at top
+    ax.set_ylim(min_depth - pad, max_depth + pad)
+    ax.invert_yaxis()
+    ax.set_yticks([0, 50, 100, 150, 200])
+
+axes[0].set_ylabel("Depth (m)")
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="upper right")
+fig.suptitle("Observed vs BRT-predicted CHLA profiles\n(10 random profiles where surface > 10 mg/m3)", y=0.98)
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+#plt.savefig("figures/pred_vs_obs_profiles.jpg", dpi=70, bbox_inches="tight")
+plt.show()
+```
+
+# Coastal waters?  { .nostretch }
+
+Not enough data yet. No correction was done for bathymetry (scattering off bottom), so that will need to be fixed for shallow water. 
+
+```{python}
+#| fig-align: center
+#| out-width: 60%
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+rrs_cols = [c for c in dataset.columns if c.startswith("pace_Rrs_") and c[-1].isdigit()]
+
+def predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=["solar_hour"]):
+    """
+    Given a single row (one Argo profile) and the dict of BRT models,
+    return predicted CHLA profile (in linear space) across depth bins.
+    """
+    if not extras == None:
+        X_row = row[rrs_cols + extras].to_frame().T  # shape (1, n_features)
+
+    preds_log10 = []
+    for c in chl_cols:
+        model = brt_models[c]
+        y_log10 = model.predict(X_row)[0]
+        preds_log10.append(y_log10)
+
+    preds_log10 = np.array(preds_log10)
+    preds = 10 ** preds_log10  # back to mg m-3
+    return preds
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Sample 10 random indices from test set
+n_profiles = 10
+inshore = ["ooi-ce01issp-sp001-08-flortj000", "ooi-ce06issp-sp001-08-flortj000", 
+           "ooi-cp03ispm-wfp01-04-flortk000", "ooi-cp03issm-rid27-02-flortd000",
+          "ooi-cp03issp-sp001-09-flortj000" ]
+valid_idx = [
+    i for i in train_idx
+    if dataset.loc[i, chl_cols].count() >= 3 and dataset.loc[i, "profile_id"].split("_")[0] in inshore 
+]
+# 2. Sample from valid_idx with a seed
+rng = np.random.default_rng(120)
+n_to_plot = min(n_profiles, len(valid_idx))  # just in case there are fewer than 10
+sample_idx = rng.choice(valid_idx, size=n_to_plot, replace=False)
+
+ncols = 5
+nrows = int(np.ceil(n_profiles / ncols))
+
+fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 4 * nrows), sharey=True)
+axes = np.atleast_1d(axes).ravel()
+
+for ax, idx in zip(axes, sample_idx):
+    row = dataset.iloc[idx]
+
+    # observed profile (line up with chl_cols order)
+    obs_profile = row[chl_cols].to_numpy()
+
+    # predicted profile
+    pred_profile = predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=extra)
+
+    ax.plot(obs_profile, depth_centers, marker="o", label="Obs", linestyle="-")
+    ax.plot(pred_profile, depth_centers, marker="s", label="BRT", linestyle="--")
+
+    ax.set_xlabel("CHLA (mg m$^{-3}$)")
+    ax.grid(True, alpha=0.3)
+
+    prof_id = row.get("type", idx)
+    if prof_id == 0:
+        prof_id = "Argo"
+    else:
+        prof_id = "OOI"
+    ax.set_title(f"type={prof_id} idx={idx}")
+
+# turn off any unused axes
+for ax in axes[n_profiles:]:
+    ax.axis("off")
+
+# Depth axis settings: 0–200 with a little padding
+min_depth = 0
+max_depth = 200
+pad = 5  # meters
+
+for ax in axes:
+    # limits WITH padding, then invert so 0 is at top
+    ax.set_ylim(min_depth - pad, max_depth + pad)
+    ax.invert_yaxis()
+    ax.set_yticks([0, 50, 100, 150, 200])
+
+axes[0].set_ylabel("Depth (m)")
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="upper right")
+fig.suptitle("Observed vs BRT-predicted CHLA profiles\n(10 random profiles from OOI Inshore Moorings)", y=0.98)
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+plt.show()
+```
+
+# Depth-wise Metrics for Each Bin
+
+* Errors for depth bin prediction
+* Location of peak CHLA
+* Height of peak CHLA
+* Integrated CHLA from 0 to 200m
+
+```{python}
+# code for metrics is abover where model loaded
+```
+
+# Absolute Errors for Depth Bins
+
+```{python}
+#| fig-align: center
+#| out-height: 70%
+
+fig, axes = plt.subplots(1, 3, figsize=(12, 6), sharey=True)
+ax_r2, ax_rmse, ax_bias = axes
+
+# ---- Panel 1: R² (log-scale fit) ----
+ax_r2.plot(metrics_df["p90_abs_err"], depth_centers, marker="o")
+ax_r2.set_xlabel("90% of Absolute Errors")
+ax_r2.set_ylabel("Depth (m)")
+ax_r2.set_xlim(0, 1.0)
+ax_r2.invert_yaxis()
+ax_r2.grid(True)
+ax_r2.set_title("90% of abs errors are below this")
+
+# ---- Panel 2: RMSE on log scale ----
+rmse_lin_vals = metrics_df["median_abs_err"]
+max_rmse = np.nanmax(rmse_lin_vals)
+ax_rmse.plot(rmse_lin_vals, depth_centers, marker="o")
+ax_rmse.set_xlabel("median abs error (CHLA, mg m$^{-3}$)")
+ax_rmse.set_xlim(0, max_rmse * 1.1 if np.isfinite(max_rmse) else 1.0)
+ax_rmse.grid(True)
+ax_rmse.set_title("Median absolute error (linear scale)")
+
+# ---- Panel 3: Bias on log scale ----
+bias_lin_vals = metrics_df["bias_lin"]
+max_abs_bias = np.nanmax(np.abs(bias_lin_vals))
+lim_bias = max_abs_bias * 1.1 if np.isfinite(max_abs_bias) else 0.1
+
+ax_bias.axvline(0.0, color="k", linestyle="--", linewidth=1)
+ax_bias.plot(bias_lin_vals, depth_centers, marker="o")
+ax_bias.set_xlabel("Bias (CHLA, mg m$^{-3}$)")
+ax_bias.set_xlim(-lim_bias, lim_bias)
+ax_bias.grid(True)
+ax_bias.set_title("Mean Bias (linear scale)")
+
+fig.suptitle("CHLA BRT Performance vs Depth on Absolute Scale", fontsize=14)
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+plt.show()
+```
+
+# Proportional Errors for Depth Bins
+
+```{python}
+#| fig-align: center
+#| out-height: 70%
+
+fig, axes = plt.subplots(1, 3, figsize=(12, 6), sharey=True)
+ax_r2, ax_rmse, ax_bias = axes
+
+# ---- Panel 1: R² (log10-scale fit) ----
+r2_log_vals = metrics_df["r2_log"].values
+ax_r2.plot(r2_log_vals, depth_centers, marker="o")
+ax_r2.set_xlabel("R² (log₁₀ scale)")
+ax_r2.set_ylabel("Depth (m)")
+ax_r2.set_xlim(0, 1.0)
+ax_r2.invert_yaxis()
+ax_r2.grid(True)
+ax_r2.set_title("BRT R² vs depth")
+
+# -------------------------
+# Helper: multiplicative scales
+# -------------------------
+ratio_lines_rmse = [1.25, 2.0, 3.0]
+ratio_labels_rmse = ["×1.25", "×2", "×3"]
+log_ratios_rmse = np.log10(ratio_lines_rmse)
+
+# ---- Panel 2: RMSE on log scale ----
+rmse_log_vals = metrics_df["rmse_log"].values
+max_rmse = np.nanmax(rmse_log_vals)
+
+# Make sure axis covers at least up to log10(3)
+target_rmse_max = max_rmse
+if np.isfinite(target_rmse_max):
+    target_rmse_max = max(target_rmse_max, log_ratios_rmse[-1] * 1.05)
+else:
+    target_rmse_max = log_ratios_rmse[-1] * 1.05
+
+ax_rmse.plot(rmse_log_vals, depth_centers, marker="o")
+ax_rmse.set_xlabel("RMSE (log₁₀ CHLA)")
+ax_rmse.set_xlim(0, target_rmse_max)
+ax_rmse.grid(True)
+ax_rmse.set_title("RMSE (log scale)")
+
+# Add vertical guide lines for multiplicative error factors (labels above axis)
+for x, lab in zip(log_ratios_rmse, ratio_labels_rmse):
+    ax_rmse.axvline(x, linestyle="--", linewidth=0.8)
+    ax_rmse.annotate(
+        lab,
+        xy=(x, 1.02),                   # x in data coords, y just above top of axes
+        xycoords=("data", "axes fraction"),
+        ha="center",
+        va="bottom",
+        fontsize=9,
+    )
+
+# ---- Panel 3: Bias on log scale ----
+bias_log_vals = metrics_df["bias_log"].values
+max_abs_bias = np.nanmax(np.abs(bias_log_vals))
+
+# Only need ±1.10  for bias
+ratio_lines_bias = [1.10]
+ratio_labels_bias = ["×1.10"]
+log_ratios_bias = np.log10(ratio_lines_bias)
+
+# Ensure bias limits cover at least ±log10(1.15)
+target_bias_lim = max_abs_bias
+min_needed = max(log_ratios_bias)  # log10(1.25)
+if np.isfinite(target_bias_lim):
+    target_bias_lim = max(target_bias_lim, min_needed) * 1.1
+else:
+    target_bias_lim = min_needed * 1.1
+
+ax_bias.axvline(0.0, color="k", linestyle="--", linewidth=1)
+ax_bias.plot(bias_log_vals, depth_centers, marker="o")
+ax_bias.set_xlabel("Bias (log₁₀ CHLA)")
+ax_bias.set_xlim(-target_bias_lim, target_bias_lim)
+ax_bias.grid(True)
+ax_bias.set_title("Mean bias (log scale)")
+
+# Add symmetric guide lines for bias (+/- multiplicative factors)
+for x, lab in zip(log_ratios_bias, ratio_labels_bias):
+    # positive bias: truth ≈ lab * prediction
+    ax_bias.axvline(x, linestyle=":", linewidth=0.8)
+    ax_bias.annotate(
+        f"+{lab}",
+        xy=(x, 1.02),
+        xycoords=("data", "axes fraction"),
+        ha="center",
+        va="bottom",
+        fontsize=9,
+    )
+    # negative bias: truth ≈ prediction / lab
+    ax_bias.axvline(-x, linestyle=":", linewidth=0.8)
+    ax_bias.annotate(
+        f"−{lab}",
+        xy=(-x, 1.02),
+        xycoords=("data", "axes fraction"),
+        ha="center",
+        va="bottom",
+        fontsize=9,
+    )
+
+# Global title
+fig.suptitle("BRT Relative (ratio) Performance by Depth Bin", fontsize=15)
+plt.tight_layout(rect=[0, 0, 1, 0.92])
+plt.show()
+```
+
+# Peak Depth and Integrated CHLA Metrics (Code)
+
+```{python}
+import numpy as np
+import pandas as pd
+from scipy.ndimage import uniform_filter1d
+
+def predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras=["solar_hour"]):
+    """
+    Given one row (Series) and fitted BRTs, return predicted CHLA profile
+    (linear units) across bins, in the same order as `chl_cols`.
+    """
+    X_row = row[rrs_cols + extras].to_frame().T
+
+    preds_log10 = []
+    for c in chl_cols:
+        model = brt_models[c]
+        y_log10 = model.predict(X_row)[0]
+        preds_log10.append(y_log10)
+
+    preds_log10 = np.array(preds_log10, dtype=float)
+    preds = 10 ** preds_log10  # back to mg m-3
+    return preds
+
+
+def peak_depth_for_row(
+    row,
+    brt_models,
+    chl_cols,
+    depth_centers,
+    extras=["solar_hour"],
+    smooth=True,
+    smooth_window=3,
+    dz=10.0,
+):
+    """
+    For a single profile (row), compute:
+      - observed & predicted peak CHLA depth (m)
+      - observed & predicted peak CHLA value (mg m-3)
+      - observed & predicted integrated CHLA 0–200 m (mg m-2)
+
+    Returns a Series with:
+      peak_obs_m, peak_pred_m, peak_error_m,
+      peak_obs_val, peak_pred_val, peak_error_val,
+      int_obs_0_200, int_pred_0_200, int_error_0_200
+    """
+    # observed profile
+    obs = row[chl_cols].to_numpy(dtype="float")
+
+    # predicted profile
+    pred = predict_profile_for_row(row, brt_models, chl_cols, depth_centers, extras)
+
+    # only trust bins where we have observed data
+    valid = ~np.isnan(obs)
+    if valid.sum() < 10:
+        return pd.Series(
+            {
+                "peak_obs_m":      np.nan,
+                "peak_pred_m":     np.nan,
+                "peak_error_m":    np.nan,
+                "peak_obs_val":    np.nan,
+                "peak_pred_val":   np.nan,
+                "peak_error_val":  np.nan,
+                "int_obs_0_200":   np.nan,
+                "int_pred_0_200":  np.nan,
+                "int_error_0_200": np.nan,
+            }
+        )
+
+    obs_valid   = obs[valid]
+    pred_valid  = pred[valid]
+    depth_valid = depth_centers[valid]
+
+    # optional smoothing to reduce jaggedness for peak detection
+    if smooth:
+        obs_s  = uniform_filter1d(obs_valid, size=smooth_window, mode="nearest")
+        pred_s = uniform_filter1d(pred_valid, size=smooth_window, mode="nearest")
+    else:
+        obs_s  = obs_valid
+        pred_s = pred_valid
+
+    # --- Peak depth & value (use smoothed profiles for peak detection) ---
+    i_obs_peak  = int(np.argmax(obs_s))
+    i_pred_peak = int(np.argmax(pred_s))
+
+    peak_obs_m   = depth_valid[i_obs_peak]
+    peak_pred_m  = depth_valid[i_pred_peak]
+    peak_error_m = peak_pred_m - peak_obs_m
+
+    peak_obs_val   = obs_s[i_obs_peak]
+    peak_pred_val  = pred_s[i_pred_peak]
+    peak_error_val = peak_pred_val - peak_obs_val
+
+    # --- Integrated CHLA 0–200 m (mg m-2) over valid bins ---
+    int_obs_0_200  = np.nansum(obs_valid  * dz)
+    int_pred_0_200 = np.nansum(pred_valid * dz)
+    int_error_0_200 = int_pred_0_200 - int_obs_0_200
+
+    return pd.Series(
+        {
+            "peak_obs_m":      peak_obs_m,
+            "peak_pred_m":     peak_pred_m,
+            "peak_error_m":    peak_error_m,
+            "peak_obs_val":    peak_obs_val,
+            "peak_pred_val":   peak_pred_val,
+            "peak_error_val":  peak_error_val,
+            "int_obs_0_200":   int_obs_0_200,
+            "int_pred_0_200":  int_pred_0_200,
+            "int_error_0_200": int_error_0_200,
+        }
+    )
+
+# ---- apply to the whole test dataset ----
+
+# depth_centers: 5, 15, ..., 195 (must match chl_cols order)
+depth_centers = np.arange(5, 5 + 10*len(chl_cols), 10)
+extra = ["solar_hour", "type"]
+df = dataset.loc[test_idx]
+
+peak_df = df.apply(
+    peak_depth_for_row,
+    axis=1,
+    args=(brt_models, chl_cols, depth_centers, extra),
+)
+
+peak_df[
+    [
+        "peak_obs_m", "peak_pred_m", "peak_error_m",
+        "peak_obs_val", "peak_pred_val", "peak_error_val",
+        "int_obs_0_200", "int_pred_0_200", "int_error_0_200",
+    ]
+].head()
+```
+
+# Peak Depth and Height
+
+```{python}
+#| fig-align: center
+#| out-height: 70%
+
+bins = [0, 50, 100, 150, 250]
+labels = ["0–50", "50–100", "100–150", "150–200+"]
+
+df_peaks = peak_df[["peak_obs_m", "peak_error_m"]].dropna().copy()
+df_peaks["obs_bin"] = pd.cut(
+    df_peaks["peak_obs_m"], bins=bins, labels=labels, right=False
+)
+
+data_for_box = [
+    df_peaks.loc[df_peaks["obs_bin"] == lab, "peak_error_m"].to_numpy()
+    for lab in labels
+]
+
+fig, ax = plt.subplots(figsize=(8, 5))
+
+# Boxplot
+ax.boxplot(data_for_box, vert=True)
+ax.set_xticklabels(labels)
+ax.set_xlabel("Observed peak depth (m)")
+ax.set_ylabel("Peak depth error (m)\n(predicted − observed)")
+ax.axhline(0, linestyle="--", linewidth=1)
+
+# Jittered points per bin
+x_jitter = 0.15  # half-width around each box position
+y_jitter = 2  # half-width around each box position
+for i, lab in enumerate(labels, start=1):  # box positions are 1..n
+    vals = df_peaks.loc[df_peaks["obs_bin"] == lab, "peak_error_m"].to_numpy()
+    if len(vals) == 0:
+        continue
+    x_vals = i + (np.random.rand(len(vals)) - 0.5) * 2 * x_jitter
+    vals = vals + (np.random.rand(len(vals)) - 0.5) * 2 * y_jitter
+    ax.scatter(x_vals, vals, s=8, alpha=0.3)
+
+plt.tight_layout()
+plt.title("Predicted versus observed depth of peak CHLA")
+plt.show()
+```
+
+# Integrated CHLA (0–200 m)
+
+```{python}
+#| fig-align: center
+#| out-height: 70%
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import r2_score, mean_squared_error
+
+# Log10 and drop NaNs / non-finite
+x = np.log10(peak_df["int_obs_0_200"].to_numpy())
+y = np.log10(peak_df["int_pred_0_200"].to_numpy())
+
+mask = np.isfinite(x) & np.isfinite(y)
+x = x[mask]
+y = y[mask]
+
+# Metrics in log space (you could also do them in linear space if you prefer)
+r2 = r2_score(x, y)
+rmse = np.sqrt(mean_squared_error(x, y))
+
+# Axis limits
+xy_min = min(x.min(), y.min())
+xy_max = max(x.max(), y.max())
+
+# Lines for ±50%
+offset_under = np.log10(0.5)   # ~ -0.301
+offset_over  = np.log10(1.5)   # ~  0.176
+
+xx = np.linspace(xy_min, xy_max, 100)
+
+plt.figure(figsize=(5, 5))
+plt.scatter(x, y, s=5, alpha=0.3)
+
+# 1:1 line
+plt.plot(xx, xx, "k--", linewidth=1, label="1:1")
+
+# 50% under- and over-prediction lines
+plt.plot(xx, xx + offset_under, "r:", linewidth=1, label="50% under")
+plt.plot(xx, xx + offset_over,  "b:", linewidth=1, label="50% over")
+
+plt.xlim(xy_min, xy_max)
+plt.ylim(xy_min, xy_max)
+
+plt.xlabel("log10 integrated CHLA obs (0–200 m)")
+plt.ylabel("log10 integrated CHLA pred (0–200 m)")
+plt.title("Integrated CHLA 0–200 m: obs vs pred")
+
+# Annotate R² and RMSE
+plt.text(
+    0.05, 0.95,
+    f"$R^2$ = {r2:.2f}\nRMSE = {rmse:.2f}",
+    transform=plt.gca().transAxes,
+    va="top",
+    ha="left",
+    bbox=dict(boxstyle="round", facecolor="white", alpha=0.7),
+)
+
+plt.legend(loc="lower right", fontsize=8)
+plt.tight_layout()
+plt.show()
+```
+
+# Toward Global Maps of CHLA Profiles
+
+Once the per-depth-bin BRTs are trained:
+
+- Apply them to each PACE pixel with valid Rrs(λ).
+- Retrieve a full CHLA profile at each ocean location.
+- Derive summary products:
+  - Integrated CHLA 0–200 m
+  - Depth of maximum CHLA
+  - Biomass-weighted mean depth
+
+This moves us toward estimates of **global, depth-resolved CHLA density from space**.
+
+---
+
+![](https://science.nasa.gov/wp-content/uploads/2023/06/pace-spacecraft-beauty2-jpg.webp)
